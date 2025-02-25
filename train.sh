@@ -6,6 +6,8 @@
 
 # Helper script to store command prompts for training models.
 
+# bash /home/pnlong/jingyue_latents/train.sh > /home/pnlong/jingyue_latents/train.txt
+
 # VARIABLES
 ##################################################
 
