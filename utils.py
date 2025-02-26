@@ -74,7 +74,7 @@ def load_txt(filepath: str):
     
 def load_pickle(filepath: str):
     """Load a pickle file."""
-    with open(filepath, "rb", encoding = "utf8") as f:
+    with open(filepath, "rb") as f:
         return pickle.load(file = f)
     
 def count_lines(filepath: str):
