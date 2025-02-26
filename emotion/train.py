@@ -230,7 +230,7 @@ if __name__ == "__main__":
     loss_fn = torch.nn.CrossEntropyLoss()
     
     # create the optimizer
-    optimizer = torch.optim.Adam(params = model.parameters(), lr = args.learning_rate, weight_decay = args.weight_decay)
+    optimizer = torch.optim.AdamW(params = model.parameters(), lr = args.learning_rate, weight_decay = args.weight_decay)
     best_optimizer_filepath = {partition: f"{checkpoints_dir}/best_optimizer.{partition}.pth" for partition in utils.RELEVANT_TRAINING_PARTITIONS}
     if args.resume and exists(best_optimizer_filepath[utils.VALID_PARTITION_NAME]):
         optimizer.load_state_dict(torch.load(f = best_optimizer_filepath[utils.VALID_PARTITION_NAME], weights_only = True))
