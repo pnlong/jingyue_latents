@@ -16,6 +16,7 @@ set -e
 SOFTWARE_DIR="/home/pnlong/jingyue_latents"
 BASE_DIR="/deepfreeze/user_shares/pnlong/jingyue_latents"
 DEFAULT_GPU=0
+DEFAULT_MODEL_NAME="model"
 
 # separator line functions
 function major_separator_line {
@@ -52,7 +53,7 @@ minor_separator_line
 
 # initial model
 echo "Initial Model:"
-echo python ${software_dir}/train.py --paths_train "${data_dir}/train.txt" --paths_valid "${data_dir}/valid.txt" --output_dir "${base_dir}" --early_stopping --use_wandb --model_name "initial" --gpu "${DEFAULT_GPU}"
+echo python ${software_dir}/train.py --paths_train "${data_dir}/train.txt" --paths_valid "${data_dir}/valid.txt" --output_dir "${base_dir}" --early_stopping --use_wandb --model_name "${DEFAULT_MODEL_NAME}" --gpu "${DEFAULT_GPU}"
 
 minor_separator_line
 
@@ -88,7 +89,7 @@ minor_separator_line
 
 # initial model
 echo "Initial Model:"
-echo python ${software_dir}/train.py --paths_train "${data_dir}/train.txt" --paths_valid "${data_dir}/valid.txt" --output_dir "${base_dir}" --early_stopping --use_wandb --model_name "initial" --gpu "${DEFAULT_GPU}"
+echo python ${software_dir}/train.py --paths_train "${data_dir}/train.txt" --paths_valid "${data_dir}/valid.txt" --output_dir "${base_dir}" --early_stopping --use_wandb --model_name "${DEFAULT_MODEL_NAME}" --gpu "${DEFAULT_GPU}"
 
 minor_separator_line
 
@@ -124,7 +125,7 @@ minor_separator_line
 
 # initial model
 echo "Initial Model:"
-echo python ${software_dir}/train.py --paths_train "${data_dir}/train.txt" --paths_valid "${data_dir}/valid.txt" --output_dir "${base_dir}" --early_stopping --use_wandb --model_name "initial" --gpu "${DEFAULT_GPU}"
+echo python ${software_dir}/train.py --paths_train "${data_dir}/train.txt" --paths_valid "${data_dir}/valid.txt" --output_dir "${base_dir}" --early_stopping --use_wandb --model_name "${DEFAULT_MODEL_NAME}" --gpu "${DEFAULT_GPU}"
 
 minor_separator_line
 
