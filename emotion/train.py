@@ -56,6 +56,7 @@ def parse_args(args = None, namespace = None):
     parser.add_argument("--lr_warmup_steps", default = utils.LEARNING_RATE_WARMUP_STEPS, type = int, help = "Learning rate warmup steps")
     parser.add_argument("--lr_decay_steps", default = utils.LEARNING_RATE_DECAY_STEPS, type = int, help = "Learning rate decay end steps")
     parser.add_argument("--lr_decay_multiplier", default = utils.LEARNING_RATE_DECAY_MULTIPLIER, type = float, help = "Learning rate multiplier at the end")
+    parser.add_argument("-wd", "--weight_decay", default = utils.WEIGHT_DECAY, type = float, help = "Weight decay for L2 regularization")
     # others
     parser.add_argument("-g", "--gpu", default = -1, type = int, help = "GPU number")
     parser.add_argument("-j", "--jobs", default = int(cpu_count() / 4), type = int, help = "Number of workers for data loading")
@@ -76,12 +77,17 @@ class EmotionMLP(torch.nn.Module):
     def __init__(self):
         super().__init__()
         layers = [
-            torch.nn.Linear(in_features = utils.LATENT_EMBEDDING_DIM, out_features = 2 * utils.LATENT_EMBEDDING_DIM),
+            torch.nn.Linear(in_features = utils.LATENT_EMBEDDING_DIM, out_features = 10),
             torch.nn.ReLU(),
-            torch.nn.Linear(in_features = 2 * utils.LATENT_EMBEDDING_DIM, out_features = utils.LATENT_EMBEDDING_DIM // 2),
-            torch.nn.ReLU(),
-            torch.nn.Linear(in_features = utils.LATENT_EMBEDDING_DIM // 2, out_features = utils.N_EMOTION_CLASSES),
+            torch.nn.Linear(in_features = 10, out_features = utils.N_EMOTION_CLASSES),
         ]
+        # layers = [
+        #     torch.nn.Linear(in_features = utils.LATENT_EMBEDDING_DIM, out_features = 2 * utils.LATENT_EMBEDDING_DIM),
+        #     torch.nn.ReLU(),
+        #     torch.nn.Linear(in_features = 2 * utils.LATENT_EMBEDDING_DIM, out_features = utils.LATENT_EMBEDDING_DIM // 2),
+        #     torch.nn.ReLU(),
+        #     torch.nn.Linear(in_features = utils.LATENT_EMBEDDING_DIM // 2, out_features = utils.N_EMOTION_CLASSES),
+        # ]
         self.mlp = torch.nn.Sequential(*layers)
 
     # forward pass
@@ -224,7 +230,7 @@ if __name__ == "__main__":
     loss_fn = torch.nn.CrossEntropyLoss()
     
     # create the optimizer
-    optimizer = torch.optim.Adam(params = model.parameters(), lr = args.learning_rate)
+    optimizer = torch.optim.Adam(params = model.parameters(), lr = args.learning_rate, weight_decay = args.weight_decay)
     best_optimizer_filepath = {partition: f"{checkpoints_dir}/best_optimizer.{partition}.pth" for partition in utils.RELEVANT_TRAINING_PARTITIONS}
     if args.resume and exists(best_optimizer_filepath[utils.VALID_PARTITION_NAME]):
         optimizer.load_state_dict(torch.load(f = best_optimizer_filepath[utils.VALID_PARTITION_NAME], weights_only = True))
