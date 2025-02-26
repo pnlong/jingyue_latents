@@ -50,7 +50,6 @@ def parse_args(args = None, namespace = None):
     parser.add_argument("-bs", "--batch_size", default = utils.BATCH_SIZE, type = int, help = "Batch size for data loader")
     parser.add_argument("--steps", default = utils.N_STEPS, type = int, help = "Number of steps")
     parser.add_argument("--valid_steps", default = utils.N_VALID_STEPS, type = int, help = "Validation frequency")
-    parser.add_argument("--save_steps", default = utils.N_SAVE_STEPS, type = int, help = "Frequency to save model parameters")
     parser.add_argument("--early_stopping", action = "store_true", help = "Whether to use early stopping")
     parser.add_argument("--early_stopping_tolerance", default = utils.EARLY_STOPPING_TOLERANCE, type = int, help = "Number of extra validation rounds before early stopping")
     parser.add_argument("-lr", "--learning_rate", default = utils.LEARNING_RATE, type = float, help = "Learning rate")
