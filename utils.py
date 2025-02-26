@@ -74,8 +74,16 @@ def load_txt(filepath: str):
     
 def load_pickle(filepath: str):
     """Load a pickle file."""
-    with open(filepath, "rb") as f:
+    with open(filepath, "rb", encoding = "utf8") as f:
         return pickle.load(file = f)
+    
+def count_lines(filepath: str):
+    """Count the number of lines in the given file."""
+    n = 0
+    with open(filepath, "r", encoding = "utf8") as f:
+        for _ in f:
+            n += 1
+    return n
 
 ##################################################
 
@@ -103,8 +111,8 @@ TRAINING_STATISTICS_OUTPUT_COLUMNS = ["step", "partition", f"is_{LOSS_STATISTIC_
 BATCH_SIZE = 12
 
 # training defaults
-N_STEPS = 50000
-N_VALID_STEPS = 1000
+N_STEPS = 100000
+N_VALID_STEPS = 2000
 EARLY_STOPPING_TOLERANCE = 10
 LEARNING_RATE = 0.0005
 LEARNING_RATE_WARMUP_STEPS = 5000

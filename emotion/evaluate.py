@@ -71,8 +71,7 @@ if __name__ == "__main__":
     output_dir = dirname(args.models_list)
 
     # get directories to eval
-    with open(args.models_list, "r") as file:
-        models = [line.strip() for line in file if line]
+    models = utils.load_txt(filepath = args.models_list)
 
     # set up the logger
     logging.basicConfig(level = logging.INFO, format = "%(message)s", handlers = [logging.FileHandler(filename = f"{output_dir}/evaluate.log", mode = "a"), logging.StreamHandler(stream = sys.stdout)])
@@ -110,14 +109,8 @@ if __name__ == "__main__":
     ##################################################
 
     # determine if we need to evaluate
-    actual_line_count_in_output_filepath = 0 # iterate through output filepath to get number of lines already written
-    with open(accuracy_output_filepath, "r") as file:
-        for _ in file:
-            actual_line_count_in_output_filepath += 1
-    test_partition_size = 0 # iterate through test partition paths to get number of songs for evaluation
-    with open(args.paths_test, "r") as file:
-        for _ in file:
-            test_partition_size += 1
+    actual_line_count_in_output_filepath = utils.count_lines(filepath = accuracy_output_filepath) # get number of lines already written
+    test_partition_size = utils.count_lines(filepath = args.paths_test) # get number of songs for evaluation
     expected_line_count_in_output_filepath = (len(models) * test_partition_size) + 1 # for each model, evaluate on all songs, add one for the column labels
 
     # evaluate if necessary
@@ -195,9 +188,10 @@ if __name__ == "__main__":
                         continue
 
                     # proceed with calculations
-                    model_column = utils.rep(x = model_column_value, times = len(batch))
                     inputs, labels, mask = batch["seq"], batch["label"], batch["mask"]
                     inputs, labels, mask = inputs.to(device), labels.to(device), mask.to(device) # move to device
+                    current_batch_size = len(labels)
+                    model_column = utils.rep(x = model_column_value, times = current_batch_size)
 
                     # get outputs
                     outputs = model(input = inputs, mask = mask)
@@ -208,7 +202,7 @@ if __name__ == "__main__":
 
                     # compute accuracy
                     predictions = get_predictions_from_outputs(outputs = outputs)
-                    correctness = (predictions == labels).to(torch.bool)
+                    correctness = (predictions == labels)
 
                     ##################################################
 
@@ -223,11 +217,11 @@ if __name__ == "__main__":
                             (
                                 model_column, # model
                                 paths, # path
-                                utils.rep(x = loss, times = len(batch)), # loss
+                                utils.rep(x = loss, times = current_batch_size), # loss
                             ))),
                         columns = utils.EMOTION_EVALUATION_LOSS_OUTPUT_COLUMNS,
                     )
-                    loss_batch_output = loss_batch_output[incomplete_paths_in_batch]
+                    loss_batch_output = loss_batch_output[incomplete_paths_in_batch].reset_index(drop = True) # only write paths that haven't been written yet
                     loss_batch_output.to_csv(path_or_buf = loss_output_filepath, sep = ",", na_rep = utils.NA_STRING, header = False, index = False, mode = "a")
 
                     # accuracy
@@ -243,11 +237,11 @@ if __name__ == "__main__":
                             ))),
                         columns = utils.EMOTION_EVALUATION_ACCURACY_OUTPUT_COLUMNS,
                     )
-                    accuracy_batch_output = accuracy_batch_output[incomplete_paths_in_batch]
+                    accuracy_batch_output = accuracy_batch_output[incomplete_paths_in_batch].reset_index(drop = True) # only write paths that haven't been written yet
                     accuracy_batch_output.to_csv(path_or_buf = accuracy_output_filepath, sep = ",", na_rep = utils.NA_STRING, header = False, index = False, mode = "a")
 
                     # free up memory
-                    del inputs, labels, mask, paths, incomplete_paths_in_batch, model_column, outputs, loss, predictions, correctness, loss_batch_output, accuracy_batch_output
+                    del paths, incomplete_paths_in_batch, inputs, labels, mask, current_batch_size, model_column, outputs, loss, predictions, correctness, loss_batch_output, accuracy_batch_output
 
                     ##################################################
 
@@ -268,12 +262,12 @@ if __name__ == "__main__":
     def prettify_table(df: pd.DataFrame) -> str:
         """Return the string for a table in a pretty way."""
         truncate_string = lambda string, n: string + "".join([" " for _ in range(n - len(string))]) if len(string) <= n else string[:n - 3] + "..." # helper function to get strings of constant length
-        model_column_width, statistic_column_width = 50, 10 # table parameters
+        model_column_width, statistic_column_width = 30, 10 # table parameters
         format_row = lambda model, statistic: truncate_string(string = model, n = model_column_width) + "  " + truncate_string(string = statistic, n = statistic_column_width) # format a row
         column_names_row = format_row(model = df.columns[0].upper(), statistic = df.columns[1].upper())
         output_string = f"{column_names_row}\n{''.join(('-' for _ in range(len(column_names_row))))}\n" # add column names and separator line to output string
         for i in df.index: # iterate through each row in data frame
-            output_string += format_row(model = df.iat[i, 0], statistic = df.iat[i, 1]) + "\n"
+            output_string += format_row(model = df.iat[i, 0], statistic = df.iat[i, 1]) + ("\n" if i != df.index[-1] else "")
         return output_string
 
     # separator line
