@@ -15,7 +15,6 @@ from os import mkdir
 from shutil import rmtree
 import argparse
 import logging
-import random
 import multiprocessing
 from tqdm import tqdm
 
@@ -93,9 +92,6 @@ class EmotionDataset(torch.utils.data.Dataset):
 # directory with jingyue's data
 EMOTION_DATA_DIR = "/deepfreeze/user_shares/jingyue/EMOPIA_emotion_recognition"
 
-# fraction of files in the validation partition that should be moved into the test partition
-FRACTION_OF_VALIDATION_TO_TEST = 0.5
-
 ##################################################
 
 
@@ -106,7 +102,7 @@ def parse_args(args = None, namespace = None):
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(prog = "Data", description = "Wrangle data.")
     parser.add_argument("-dd", "--data_dir", default = f"{EMOTION_DATA_DIR}/data_rvq_tokens_test", type = str, help = "Directory containing pickled data files")
-    parser.add_argument("-pd", "--partitions_dir", default = f"{EMOTION_DATA_DIR}/data_splits", type = str, help = "Directory containing pickled training and validation filepaths")
+    parser.add_argument("-pd", "--partitions_dir", default = f"{EMOTION_DATA_DIR}/data_splits_new", type = str, help = "Directory containing pickled training and validation filepaths")
     parser.add_argument("-od", "--output_dir", default = utils.EMOTION_DIR, type = str, help = "Output directory")
     parser.add_argument("-r", "--reset", action = "store_true", help = "Whether or not to recreate files")
     return parser.parse_args(args = args, namespace = namespace)
@@ -127,9 +123,6 @@ if __name__ == "__main__":
 
     # set up logging
     logging.basicConfig(level = logging.INFO, format = "%(message)s")
-
-    # set random seed
-    random.seed(0)
 
     # number of jobs for multiprocessing and data loader
     jobs = int(multiprocessing.cpu_count() / 4)
@@ -168,9 +161,14 @@ if __name__ == "__main__":
     # read in validation file
     valid_paths = utils.load_pickle(filepath = f"{args.partitions_dir}/valid.pkl")
     valid_paths = list(map(convert_to_absolute_path, valid_paths)) # convert to absolute paths
-    random.shuffle(valid_paths) # shuffle valid paths to ensure randomness
     all_paths.extend(valid_paths) # add to all paths
     valid_paths = list(map(convert_to_absolute_output_path, valid_paths)) # convert to final absolute output paths
+
+    # read in test file
+    test_paths = utils.load_pickle(filepath = f"{args.partitions_dir}/test.pkl")
+    test_paths = list(map(convert_to_absolute_path, test_paths)) # convert to absolute paths
+    all_paths.extend(test_paths) # add to all paths
+    test_paths = list(map(convert_to_absolute_output_path, test_paths)) # convert to final absolute output paths
 
     ##################################################
 
@@ -206,6 +204,7 @@ if __name__ == "__main__":
 
     # print longest sequence length
     logging.info(f"Longest song length (in number of bars): {max(song_lengths)}")
+    logging.info(f"{len(all_paths)} songs (Train: {len(train_paths)}, Validation: {len(valid_paths)}, Test: {len(test_paths)}).")
 
     # free up memory
     del all_paths, song_lengths
@@ -221,11 +220,6 @@ if __name__ == "__main__":
     valid_output_path = f"{splits_dir}/{utils.VALID_PARTITION_NAME}.txt"
     test_output_path = f"{splits_dir}/{utils.TEST_PARTITION_NAME}.txt"
 
-    # split validation partition into validation and test partitions
-    n_valid = int(FRACTION_OF_VALIDATION_TO_TEST * len(valid_paths)) + 1
-    test_paths = valid_paths[n_valid:]
-    valid_paths = valid_paths[:n_valid] 
-
     # write to file
     if not all(map(exists, (train_output_path, valid_output_path, test_output_path))) or args.reset:
         logging.info(utils.MAJOR_SEPARATOR_LINE)
@@ -237,7 +231,7 @@ if __name__ == "__main__":
         logging.info(f"Wrote test partition to {test_output_path}.")
 
     # free up memory
-    del n_valid, train_paths, valid_paths, test_paths
+    del train_paths, valid_paths, test_paths
 
     ##################################################
 
@@ -265,11 +259,11 @@ if __name__ == "__main__":
 
         # update tracker variables
         n_batches += 1
-        n_samples += len(batch)
+        n_samples += len(batch["seq"])
 
         # print example on first batch
         if i == 0:
-            logging.info("Example:")
+            logging.info("Example on the validation partition:")
             inputs, labels, mask, paths = batch["seq"], batch["label"], batch["mask"], batch["path"]
             logging.info(f"Shape of data: {tuple(inputs.shape)}")
             # logging.info(f"Data: {inputs}")

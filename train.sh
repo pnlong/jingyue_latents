@@ -46,7 +46,7 @@ major_separator_line
 
 # create dataset
 echo "Dataset:"
-echo python ${software_dir}/dataset.py --data_dir "${jingyue_data_dir}/data_rvq_tokens_test" --partitions_dir "${jingyue_data_dir}/data_splits" --output_dir "${base_dir}"
+echo python ${software_dir}/dataset.py --data_dir "${jingyue_data_dir}/data_rvq_tokens_test" --partitions_dir "${jingyue_data_dir}/data_splits_new" --output_dir "${base_dir}"
 
 minor_separator_line
 

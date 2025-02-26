@@ -76,18 +76,18 @@ class EmotionMLP(torch.nn.Module):
     # initializer
     def __init__(self):
         super().__init__()
-        layers = [
-            torch.nn.Linear(in_features = utils.LATENT_EMBEDDING_DIM, out_features = 10),
-            torch.nn.ReLU(),
-            torch.nn.Linear(in_features = 10, out_features = utils.N_EMOTION_CLASSES),
-        ]
-        # layers = [
-        #     torch.nn.Linear(in_features = utils.LATENT_EMBEDDING_DIM, out_features = 2 * utils.LATENT_EMBEDDING_DIM),
+        # layers = [ # for debugging
+        #     torch.nn.Linear(in_features = utils.LATENT_EMBEDDING_DIM, out_features = 10),
         #     torch.nn.ReLU(),
-        #     torch.nn.Linear(in_features = 2 * utils.LATENT_EMBEDDING_DIM, out_features = utils.LATENT_EMBEDDING_DIM // 2),
-        #     torch.nn.ReLU(),
-        #     torch.nn.Linear(in_features = utils.LATENT_EMBEDDING_DIM // 2, out_features = utils.N_EMOTION_CLASSES),
+        #     torch.nn.Linear(in_features = 10, out_features = utils.N_EMOTION_CLASSES),
         # ]
+        layers = [
+            torch.nn.Linear(in_features = utils.LATENT_EMBEDDING_DIM, out_features = 2 * utils.LATENT_EMBEDDING_DIM),
+            torch.nn.ReLU(),
+            torch.nn.Linear(in_features = 2 * utils.LATENT_EMBEDDING_DIM, out_features = utils.LATENT_EMBEDDING_DIM // 2),
+            torch.nn.ReLU(),
+            torch.nn.Linear(in_features = utils.LATENT_EMBEDDING_DIM // 2, out_features = utils.N_EMOTION_CLASSES),
+        ]
         self.mlp = torch.nn.Sequential(*layers)
 
     # forward pass
