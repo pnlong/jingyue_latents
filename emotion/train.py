@@ -31,6 +31,7 @@ sys.path.insert(0, dirname(realpath(__file__)))
 sys.path.insert(0, dirname(dirname(realpath(__file__))))
 
 from dataset import EmotionDataset
+from model import get_model, get_predictions_from_outputs
 import utils
 
 ##################################################
@@ -44,19 +45,22 @@ def parse_args(args = None, namespace = None):
     parser = argparse.ArgumentParser(prog = "Train", description = "Train a Model.")
     parser.add_argument("-pt", "--paths_train", default = f"{utils.EMOTION_DIR}/{utils.DATA_DIR_NAME}/{utils.TRAIN_PARTITION_NAME}.txt", type = str, help = ".txt file with absolute filepaths in training partition")
     parser.add_argument("-pv", "--paths_valid", default = f"{utils.EMOTION_DIR}/{utils.DATA_DIR_NAME}/{utils.VALID_PARTITION_NAME}.txt", type = str, help = ".txt file with absolute filepaths in validation partition")
+    parser.add_argument("-dd", "--data_dir", default = f"{utils.EMOTION_DIR}/{utils.DATA_DIR_NAME}/{utils.DATA_SUBDIR_NAME}", type = str, help = "Directory that contains files described in --paths_train and --paths_valid")
     parser.add_argument("-o", "--output_dir", default = utils.EMOTION_DIR, type = str, help = "Output directory")
     parser.add_argument("-mn", "--model_name", default = utils.EMOTION_MODEL_NAME, type = str, help = "Name of the model")
-    # training
+    # training 
+    parser.add_argument("-pp", "--prepool", action = "store_true", help = "Whether or not to prepool `num_bar` dimension before feeding data to model (as opposed to after)")
+    parser.add_argument("-ut", "--use_transformer", action = "store_true", help = "Whether or not to use a transformer model")
     parser.add_argument("-bs", "--batch_size", default = utils.BATCH_SIZE, type = int, help = "Batch size for data loader")
     parser.add_argument("--steps", default = utils.N_STEPS, type = int, help = "Number of steps")
     parser.add_argument("--valid_steps", default = utils.N_VALID_STEPS, type = int, help = "Validation frequency")
     parser.add_argument("--early_stopping", action = "store_true", help = "Whether to use early stopping")
     parser.add_argument("--early_stopping_tolerance", default = utils.EARLY_STOPPING_TOLERANCE, type = int, help = "Number of extra validation rounds before early stopping")
+    parser.add_argument("-wd", "--weight_decay", default = utils.WEIGHT_DECAY, type = float, help = "Weight decay for L2 regularization")
     parser.add_argument("-lr", "--learning_rate", default = utils.LEARNING_RATE, type = float, help = "Learning rate")
     parser.add_argument("--lr_warmup_steps", default = utils.LEARNING_RATE_WARMUP_STEPS, type = int, help = "Learning rate warmup steps")
     parser.add_argument("--lr_decay_steps", default = utils.LEARNING_RATE_DECAY_STEPS, type = int, help = "Learning rate decay end steps")
     parser.add_argument("--lr_decay_multiplier", default = utils.LEARNING_RATE_DECAY_MULTIPLIER, type = float, help = "Learning rate multiplier at the end")
-    parser.add_argument("-wd", "--weight_decay", default = utils.WEIGHT_DECAY, type = float, help = "Weight decay for L2 regularization")
     # others
     parser.add_argument("-g", "--gpu", default = -1, type = int, help = "GPU number")
     parser.add_argument("-j", "--jobs", default = int(cpu_count() / 4), type = int, help = "Number of workers for data loading")
@@ -64,68 +68,6 @@ def parse_args(args = None, namespace = None):
     parser.add_argument("-ir", "--infer_run_name", action = "store_true", help = "Whether or not to infer the WANDB run name when resuming")
     parser.add_argument("--use_wandb", action = "store_true", help = "Whether or not to log progress with WANDB")
     return parser.parse_args(args = args, namespace = namespace)
-
-##################################################
-
-
-# CUSTOM NEURAL NETWORK
-##################################################
-
-class EmotionMLP(torch.nn.Module):
-
-    # initializer
-    def __init__(self):
-        super().__init__()
-        # layers = [ # for debugging
-        #     torch.nn.Linear(in_features = utils.LATENT_EMBEDDING_DIM, out_features = 10),
-        #     torch.nn.ReLU(),
-        #     torch.nn.Linear(in_features = 10, out_features = utils.N_EMOTION_CLASSES),
-        # ]
-        layers = [
-            torch.nn.Linear(in_features = utils.LATENT_EMBEDDING_DIM, out_features = 2 * utils.LATENT_EMBEDDING_DIM),
-            torch.nn.ReLU(),
-            torch.nn.Linear(in_features = 2 * utils.LATENT_EMBEDDING_DIM, out_features = utils.LATENT_EMBEDDING_DIM // 2),
-            torch.nn.ReLU(),
-            torch.nn.Linear(in_features = utils.LATENT_EMBEDDING_DIM // 2, out_features = utils.N_EMOTION_CLASSES),
-        ]
-        self.mlp = torch.nn.Sequential(*layers)
-
-    # forward pass
-    def forward(self, input: torch.Tensor, mask: torch.Tensor):
-
-        # reshape input from (batch_size, num_bar, embedding_dim) to (batch_size * num_bar, embedding_dim)
-        input = input.flatten(start_dim = 0, end_dim = 1)
-
-        # run input through model, which yields an output of size (batch_size * num_bar, n_classes)
-        output = self.mlp(input)
-
-        # reshape output to size (batch_size, num_bar, n_classes)
-        output = output.unflatten(dim = 0, sizes = mask.shape)
-
-        # apply mask (size of (batch_size, num_bar)) to output
-        output *= mask.unsqueeze(dim = -1)
-
-        # average output to reduce num_bar dimension; output is now of size (batch_size, n_classes)
-        logits = output.sum(dim = 1) / mask.sum(dim = -1).unsqueeze(dim = -1)
-
-        # return final logits
-        return logits
-
-##################################################
-
-
-# HELPER FUNCTIONS
-##################################################
-
-def get_predictions_from_outputs(outputs: torch.Tensor) -> torch.Tensor:
-    """Directly given the outputs from the model, convert the output into label predictions."""
-
-    # get predictions from outputs
-    outputs = torch.nn.functional.softmax(input = outputs, dim = -1) # apply softmax function to convert to probability distribution
-    predictions = torch.argmax(input = outputs, dim = -1) # determine final class prediction from softmaxed outputs
-    
-    # return class predictions
-    return predictions
 
 ##################################################
 
@@ -140,6 +82,9 @@ if __name__ == "__main__":
 
     # parse the command-line arguments
     args = parse_args()
+
+    # infer extra arguments
+    args.using_prebottleneck_latents = (utils.PREBOTTLENECK_DATA_SUBDIR_NAME == basename(args.data_dir)) # whether prebottleneck latents are being used
 
     # check filepath arguments
     if not exists(args.paths_train):
@@ -156,8 +101,8 @@ if __name__ == "__main__":
     # create the dataset and data loader
     print(f"Creating the data loader...")
     dataset = {
-        utils.TRAIN_PARTITION_NAME: EmotionDataset(paths = args.paths_train),
-        utils.VALID_PARTITION_NAME: EmotionDataset(paths = args.paths_valid),
+        utils.TRAIN_PARTITION_NAME: EmotionDataset(directory = args.data_dir, paths = args.paths_train, pool = args.prepool),
+        utils.VALID_PARTITION_NAME: EmotionDataset(directory = args.data_dir, paths = args.paths_valid, pool = args.prepool),
         }
     data_loader = {
         utils.TRAIN_PARTITION_NAME: torch.utils.data.DataLoader(dataset = dataset[utils.TRAIN_PARTITION_NAME], batch_size = args.batch_size, shuffle = True, num_workers = args.jobs, collate_fn = dataset[utils.TRAIN_PARTITION_NAME].collate),
@@ -166,7 +111,7 @@ if __name__ == "__main__":
 
     # create the model
     print(f"Creating model...")
-    model = EmotionMLP().to(device)
+    model = get_model(args = vars(args)).to(device)
     n_parameters = sum(p.numel() for p in model.parameters()) # statistics
     n_parameters_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad) # statistics (model size)
 
@@ -346,16 +291,9 @@ if __name__ == "__main__":
             # release GPU memory right away
             del inputs, labels, mask, outputs, loss, predictions, n_correct_in_batch, accuracy
 
-        # compute average loss/accuracy across batches
+        # compute average loss/accuracy across batches for output data tables
         statistics[utils.LOSS_STATISTIC_NAME][utils.TRAIN_PARTITION_NAME] /= count
         statistics[utils.ACCURACY_STATISTIC_NAME][utils.TRAIN_PARTITION_NAME] /= (count / 100)
-        
-        # log train info for wandb
-        if args.use_wandb:
-            wandb.log({
-                f"{utils.TRAIN_PARTITION_NAME}/{utils.LOSS_STATISTIC_NAME}": statistics[utils.LOSS_STATISTIC_NAME][utils.TRAIN_PARTITION_NAME],
-                f"{utils.TRAIN_PARTITION_NAME}/{utils.ACCURACY_STATISTIC_NAME}": statistics[utils.ACCURACY_STATISTIC_NAME][utils.TRAIN_PARTITION_NAME],
-            }, step = step)
         
         ##################################################
 
@@ -372,7 +310,7 @@ if __name__ == "__main__":
             
             # iterate through validation data loader
             count = 0 # count number of songs
-            for batch in (progress_bar := tqdm(iterable = data_loader[utils.VALID_PARTITION_NAME], desc = "Validating")):
+            for batch in tqdm(iterable = data_loader[utils.VALID_PARTITION_NAME], desc = "Validating"):
 
                 # get input and output pair
                 inputs, labels, mask = batch["seq"], batch["label"], batch["mask"]
@@ -389,17 +327,6 @@ if __name__ == "__main__":
                 # compute accuracy
                 predictions = get_predictions_from_outputs(outputs = outputs)
                 n_correct_in_batch = int(sum(predictions == labels))
-                accuracy = 100 * (n_correct_in_batch / current_batch_size)
-
-                # set progress bar
-                progress_bar.set_postfix(loss = f"{loss:8.4f}", accuracy = f"{accuracy:3.2f}%")
-
-                # log training loss/accuracy for wandb
-                if args.use_wandb:
-                    wandb.log({
-                        f"{utils.VALID_PARTITION_NAME}/{utils.LOSS_STATISTIC_NAME}": loss,
-                        f"{utils.VALID_PARTITION_NAME}/{utils.ACCURACY_STATISTIC_NAME}": accuracy,
-                    }, step = step)
 
                 # update count
                 count += current_batch_size
@@ -409,21 +336,18 @@ if __name__ == "__main__":
                 statistics[utils.ACCURACY_STATISTIC_NAME][utils.VALID_PARTITION_NAME] += n_correct_in_batch
 
                 # release GPU memory right away
-                del inputs, labels, mask, outputs, loss, predictions, n_correct_in_batch, accuracy
+                del inputs, labels, mask, outputs, loss, predictions, n_correct_in_batch
 
-        # compute average loss/accuracy across batches
+        # compute average loss/accuracy across batches for output data tables (and WANDB if applicable)
         statistics[utils.LOSS_STATISTIC_NAME][utils.VALID_PARTITION_NAME] /= count
         statistics[utils.ACCURACY_STATISTIC_NAME][utils.VALID_PARTITION_NAME] /= (count / 100)
 
         # output statistics
         logging.info(f"Validation loss: {statistics[utils.LOSS_STATISTIC_NAME][utils.VALID_PARTITION_NAME]:.4f}")
 
-        # log validation info for wandb
+        # log validation statistics for wandb
         if args.use_wandb:
-            wandb.log({
-                f"{utils.VALID_PARTITION_NAME}/{utils.LOSS_STATISTIC_NAME}": statistics[utils.LOSS_STATISTIC_NAME][utils.VALID_PARTITION_NAME],
-                f"{utils.VALID_PARTITION_NAME}/{utils.ACCURACY_STATISTIC_NAME}": statistics[utils.ACCURACY_STATISTIC_NAME][utils.VALID_PARTITION_NAME],
-            }, step = step)
+            wandb.log({f"{utils.VALID_PARTITION_NAME}/{statistic}": statistics[statistic][utils.VALID_PARTITION_NAME] for statistic in utils.RELEVANT_TRAINING_STATISTICS}, step = step)
 
         ##################################################
 
@@ -467,7 +391,7 @@ if __name__ == "__main__":
                 logging.info(f"Best {partition}_{utils.ACCURACY_STATISTIC_NAME} so far!")
 
         # increment the early stopping counter if no improvement is found
-        if (not is_an_improvement) and args.early_stopping:
+        if not is_an_improvement and args.early_stopping:
             count_early_stopping += 1 # increment
 
         # early stopping
@@ -495,7 +419,7 @@ if __name__ == "__main__":
         wandb.finish() # finish the wandb run
 
     # output model name to list of models
-    models_output_filepath = f"{output_parent_dir}/models.txt"
+    models_output_filepath = f"{output_parent_dir}/{utils.MODELS_FILE_NAME}.txt"
     if exists(models_output_filepath):
         models = set(utils.load_txt(filepath = models_output_filepath)) # read in list of trained models and use a set because better for `in` operations
     else:
@@ -507,4 +431,3 @@ if __name__ == "__main__":
     ##################################################
 
 ##################################################
-

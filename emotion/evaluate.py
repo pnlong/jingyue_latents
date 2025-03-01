@@ -28,7 +28,7 @@ sys.path.insert(0, dirname(realpath(__file__)))
 sys.path.insert(0, dirname(dirname(realpath(__file__))))
 
 from dataset import EmotionDataset
-from train import EmotionMLP, get_predictions_from_outputs
+from model import get_model, get_predictions_from_outputs
 import utils
 
 ##################################################
@@ -39,9 +39,9 @@ import utils
 
 def parse_args(args = None, namespace = None):
     """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(prog = "Evaluate", description = "Evaluate all Models.")
+    parser = argparse.ArgumentParser(prog = "Evaluate", description = "Evaluate all models.")
     parser.add_argument("-pt", "--paths_test", default = f"{utils.EMOTION_DIR}/{utils.DATA_DIR_NAME}/{utils.TEST_PARTITION_NAME}.txt", type = str, help = ".txt file with absolute filepaths in testing partition")
-    parser.add_argument("-ml", "--models_list", default = f"{utils.EMOTION_DIR}/models.txt", type = str, help = "Filepath to list of model names (which are also subdirectories of the directory in which the file resides)")
+    parser.add_argument("-ml", "--models_list", default = f"{utils.EMOTION_DIR}/{utils.MODELS_FILE_NAME}.txt", type = str, help = "Filepath to list of model names (which are also subdirectories of the directory in which the file resides)")
     # others
     parser.add_argument("-bs", "--batch_size", default = utils.BATCH_SIZE, type = int, help = "Batch size for data loader")
     parser.add_argument("-g", "--gpu", default = -1, type = int, help = "GPU number")
@@ -144,7 +144,7 @@ if __name__ == "__main__":
             del train_args_filepath
 
             # load dataset and data loader
-            dataset = EmotionDataset(paths = args.paths_test)
+            dataset = EmotionDataset(directory = train_args["data_dir"], paths = args.paths_test, pool = train_args["prepool"])
             data_loader = torch.utils.data.DataLoader(
                 dataset = dataset,
                 batch_size = args.batch_size,
@@ -154,7 +154,7 @@ if __name__ == "__main__":
             )
 
             # create the model
-            model = EmotionMLP().to(device)
+            model = get_model(args = train_args).to(device)
 
             # load the checkpoint
             checkpoint_filepath = f"{model_dir}/{utils.CHECKPOINTS_DIR_NAME}/best_model.{utils.VALID_PARTITION_NAME}.pth"
