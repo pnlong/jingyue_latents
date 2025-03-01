@@ -207,7 +207,8 @@ def get_lr_multiplier(step: int, warmup_steps: int, decay_end_steps: int, decay_
 # EVALUATION CONSTANTS
 ##################################################
 
-
+EVALUATION_LOSS_OUTPUT_COLUMNS = ["model", "path", LOSS_STATISTIC_NAME]
+EVALUATION_ACCURACY_OUTPUT_COLUMNS = ["model", "path", "expected", "actual", "is_correct"]
 
 ##################################################
 
@@ -263,7 +264,8 @@ TASK_NAME_TO_JINGYUE_DATA_DIR[EMOTION_DIR_NAME] = EMOTION_DATA_DIR
 EMOTION_DIR = f"{BASE_DIR}/{EMOTION_DIR_NAME}"
 
 # mappings
-EMOTION_TO_EMOTION_ID = {"happy": "Q1", "angry": "Q2", "sad": "Q3", "relax": "Q4"}
+EMOTIONS = ["happy", "angry", "sad", "relax"]
+EMOTION_TO_EMOTION_ID = {emotion: f"Q{i + 1}" for i, emotion in enumerate(EMOTIONS)}
 EMOTION_TO_INDEX = {emotion: i for i, emotion in enumerate(EMOTION_TO_EMOTION_ID.keys())}
 EMOTION_ID_TO_INDEX = {emotion_id: i for i, emotion_id in enumerate(EMOTION_TO_EMOTION_ID.values())}
 EMOTION_ID_TO_EMOTION = inverse_dict(d = EMOTION_TO_EMOTION_ID)
@@ -271,7 +273,7 @@ INDEX_TO_EMOTION = inverse_dict(d = EMOTION_TO_INDEX)
 INDEX_TO_EMOTION_ID = inverse_dict(d = EMOTION_ID_TO_INDEX)
 
 # number of emotion classes
-N_EMOTION_CLASSES = len(EMOTION_TO_EMOTION_ID)
+EMOTION_N_CLASSES = len(EMOTIONS)
 
 # maximum song length (in bars) for emotion data
 EMOTION_MAX_SEQ_LEN = 42
@@ -280,8 +282,8 @@ EMOTION_MAX_SEQ_LEN = 42
 EMOTION_MODEL_NAME = DEFAULT_MODEL_NAME
 
 # emotion evaluation output columns
-EMOTION_EVALUATION_LOSS_OUTPUT_COLUMNS = ["model", "path", LOSS_STATISTIC_NAME]
-EMOTION_EVALUATION_ACCURACY_OUTPUT_COLUMNS = ["model", "path", "expected", "actual", "is_correct"]
+EMOTION_EVALUATION_LOSS_OUTPUT_COLUMNS = EVALUATION_LOSS_OUTPUT_COLUMNS
+EMOTION_EVALUATION_ACCURACY_OUTPUT_COLUMNS = EVALUATION_ACCURACY_OUTPUT_COLUMNS
 
 ##################################################
 
@@ -290,15 +292,30 @@ EMOTION_EVALUATION_ACCURACY_OUTPUT_COLUMNS = ["model", "path", "expected", "actu
 ##################################################
 
 # directory with jingyue's data
-CHORD_DATA_DIR = f"{JINGYUE_DIR}/Pianist8_style_classification"
+CHORD_DATA_DIR = f"{JINGYUE_DIR}/dir"
 
 # chord progression detection
 CHORD_DIR_NAME = "chord"
 TASK_NAME_TO_JINGYUE_DATA_DIR[CHORD_DIR_NAME] = CHORD_DATA_DIR
 CHORD_DIR = f"{BASE_DIR}/{CHORD_DIR_NAME}"
 
+# mappings
+CHORDS = []
+CHORD_TO_INDEX = {chord: i for i, chord in enumerate(CHORDS)}
+INDEX_TO_CHORD = inverse_dict(d = CHORD_TO_INDEX)
+
+# number of chord classes
+CHORD_N_CLASSES = len(CHORDS)
+
+# maximum song length (in bars) for chord data
+CHORD_MAX_SEQ_LEN = 42
+
 # default model name for chord
 CHORD_MODEL_NAME = DEFAULT_MODEL_NAME
+
+# chord evaluation output columns
+CHORD_EVALUATION_LOSS_OUTPUT_COLUMNS = EVALUATION_LOSS_OUTPUT_COLUMNS
+CHORD_EVALUATION_ACCURACY_OUTPUT_COLUMNS = EVALUATION_ACCURACY_OUTPUT_COLUMNS
 
 ##################################################
 
@@ -307,15 +324,30 @@ CHORD_MODEL_NAME = DEFAULT_MODEL_NAME
 ##################################################
 
 # directory with jingyue's data
-STYLE_DATA_DIR = f"{JINGYUE_DIR}/dir"
+STYLE_DATA_DIR = f"{JINGYUE_DIR}/Pianist8_style_classification"
 
 # style classifier
 STYLE_DIR_NAME = "style"
 TASK_NAME_TO_JINGYUE_DATA_DIR[STYLE_DIR_NAME] = STYLE_DATA_DIR
 STYLE_DIR = f"{BASE_DIR}/{STYLE_DIR_NAME}"
 
+# mappings
+STYLES = ["Bethel", "Clayderman", "Einaudi", "Hancock", "Hillsong", "Hisaishi", "Ryuichi", "Yiruma"]
+STYLE_TO_INDEX = {style: i for i, style in enumerate(STYLES)}
+INDEX_TO_STYLE = inverse_dict(d = STYLE_TO_INDEX)
+
+# number of style classes
+STYLE_N_CLASSES = len(STYLES)
+
+# maximum song length (in bars) for style data
+STYLE_MAX_SEQ_LEN = 42
+
 # default model name for style
 STYLE_MODEL_NAME = DEFAULT_MODEL_NAME
+
+# style evaluation output columns
+STYLE_EVALUATION_LOSS_OUTPUT_COLUMNS = EVALUATION_LOSS_OUTPUT_COLUMNS
+STYLE_EVALUATION_ACCURACY_OUTPUT_COLUMNS = EVALUATION_ACCURACY_OUTPUT_COLUMNS
 
 ##################################################
 

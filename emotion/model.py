@@ -30,7 +30,7 @@ class EmotionMLP(nn.Module):
     # initializer
     def __init__(self,
             input_dim: int = utils.LATENT_EMBEDDING_DIM, # number of input features
-            output_dim: int = utils.N_EMOTION_CLASSES, # number of output features
+            output_dim: int = utils.EMOTION_N_CLASSES, # number of output features
             prepool: bool = False, # whether inputs are prepooled
             use_large: bool = False, # whether to use larger model
             use_small: bool = False, # whether to use smaller model
@@ -95,7 +95,7 @@ class EmotionTransformer(nn.Module):
     # initializer
     def __init__(self,
             input_dim: int = utils.LATENT_EMBEDDING_DIM, # number of input features
-            output_dim: int = utils.N_EMOTION_CLASSES, # number of output features
+            output_dim: int = utils.EMOTION_N_CLASSES, # number of output features
             max_seq_len: int = utils.EMOTION_MAX_SEQ_LEN, # maximum sequence length
             heads: int = utils.TRANSFORMER_HEADS, # number of attention heads
             layers: int = utils.TRANSFORMER_LAYERS, # number of layers
@@ -171,8 +171,9 @@ def get_model(args: dict) -> nn.Module:
     # scrape variables from arguments
     use_transformer = args.get("use_transformer", False)
     input_dim = utils.PREBOTTLENECK_LATENT_EMBEDDING_DIM if args.get("using_prebottleneck_latents", False) else utils.LATENT_EMBEDDING_DIM
-    output_dim = utils.N_EMOTION_CLASSES
+    output_dim = utils.EMOTION_N_CLASSES
     prepool = args.get("prepool", False)
+    model_name = args.get("model_name")
 
     # create transformer model
     if use_transformer:
@@ -190,7 +191,7 @@ def get_model(args: dict) -> nn.Module:
         model = EmotionMLP(
             input_dim = input_dim, output_dim = output_dim,
             prepool = prepool,
-            use_large = False, use_small = False,
+            use_large = "large" in model_name, use_small = "small" in model_name,
         )
 
     # return the correct model
