@@ -389,8 +389,7 @@ if __name__ == "__main__":
     DEFAULT_GPU = 0
 
     # helper functions
-    ignore_empty_string = lambda string: len(string) > 0
-    join_arguments = lambda args: " ".join(filter(ignore_empty_string, args))
+    join_arguments = lambda args: " ".join(filter(lambda string: len(string) > 0, args))
 
     ##################################################
 
@@ -436,6 +435,7 @@ if __name__ == "__main__":
                 use_transformer: bool = False,
             ):
             """Helper function to log the train command string."""
+            logging.info("* " + ("Transformer" if use_transformer else "MLP") + (", Prepooled" if prepool else "") + (", Prebottlenecked" if using_prebottleneck_latents else "") + ":")
             logging.info(join_arguments(args = [
                 f"python {software_dir}/train.py",
                 f"--data_dir {data_dir}/{PREBOTTLENECK_DATA_SUBDIR_NAME if using_prebottleneck_latents else DATA_SUBDIR_NAME}",
@@ -453,10 +453,8 @@ if __name__ == "__main__":
         # log commands for different models
         for prepool in (False, True):
             for using_prebottleneck_latents in (False, True):
-                logging.info("* MLP" + (", Prepooled" if prepool else "") + (", Prebottlenecked" if using_prebottleneck_latents else "") + ":")
                 log_train_command_string(using_prebottleneck_latents = using_prebottleneck_latents, prepool = prepool, use_transformer = False)
         for using_prebottleneck_latents in (False, True):
-            logging.info("* Transformer" + (", Prebottlenecked" if using_prebottleneck_latents else "") + ":")
             log_train_command_string(using_prebottleneck_latents = using_prebottleneck_latents, prepool = False, use_transformer = True)
         del log_train_command_string # free up memory
         
