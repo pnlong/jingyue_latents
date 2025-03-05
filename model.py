@@ -1,10 +1,10 @@
 # README
 # Phillip Long
-# February 22, 2025
+# March 4, 2025
 
-# Prepare emotion recognition model.
+# Prepare a model.
 
-# python /home/pnlong/jingyue_latents/emotion/model.py
+# python /home/pnlong/jingyue_latents/model.py
 
 # IMPORTS
 ##################################################
@@ -25,12 +25,12 @@ import utils
 # CUSTOM MULTILAYER PERCEPTRON
 ##################################################
 
-class EmotionMLP(nn.Module):
+class CustomMLP(nn.Module):
 
     # initializer
     def __init__(self,
-            input_dim: int = utils.LATENT_EMBEDDING_DIM, # number of input features
-            output_dim: int = utils.EMOTION_N_CLASSES, # number of output features
+            input_dim: int, # number of input features
+            output_dim: int, # number of output features
             prepool: bool = False, # whether inputs are prepooled
             use_large: bool = False, # whether to use larger model
             use_small: bool = False, # whether to use smaller model
@@ -90,19 +90,31 @@ class EmotionMLP(nn.Module):
 # CUSTOM TRANSFORMER
 ##################################################
 
-class EmotionTransformer(nn.Module):
+class CustomTransformer(nn.Module):
 
     # initializer
     def __init__(self,
-            input_dim: int = utils.LATENT_EMBEDDING_DIM, # number of input features
-            output_dim: int = utils.EMOTION_N_CLASSES, # number of output features
-            max_seq_len: int = utils.EMOTION_MAX_SEQ_LEN, # maximum sequence length
-            heads: int = utils.TRANSFORMER_HEADS, # number of attention heads
-            layers: int = utils.TRANSFORMER_LAYERS, # number of layers
-            dropout: float = utils.TRANSFORMER_DROPOUT, # dropout rate
-            feedforward_layers: int = utils.TRANSFORMER_FEEDFORWARD_LAYERS, # number of feedforward layers
+            input_dim: int, # number of input features
+            output_dim: int, # number of output features
+            max_seq_len: int, # maximum sequence length
+            use_large: bool = False, # whether to use larger model
+            use_small: bool = False, # whether to use smaller model
         ):
         super().__init__()
+
+        # draft model architecture
+        dropout = utils.TRANSFORMER_DROPOUT # dropout rate
+        heads = utils.TRANSFORMER_HEADS # number of attention heads
+        layers = utils.TRANSFORMER_LAYERS # number of layers
+        feedforward_layers = utils.TRANSFORMER_FEEDFORWARD_LAYERS # number of feedforward layers
+        if use_large:
+            heads *= 2
+            layers *= 2
+            feedforward_layers *= 2
+        elif use_small:
+            heads //= 2
+            layers //= 2
+            feedforward_layers //= 2
 
         # positional embeddings (learned)
         self.position_embeddings = nn.Embedding(
@@ -169,29 +181,33 @@ def get_model(args: dict) -> nn.Module:
     """Helper function to return the correct model given arguments as a dictionary."""
 
     # scrape variables from arguments
+    task = args.get("task")
     use_transformer = args.get("use_transformer", False)
-    input_dim = utils.PREBOTTLENECK_LATENT_EMBEDDING_DIM if args.get("using_prebottleneck_latents", False) else utils.LATENT_EMBEDDING_DIM
-    output_dim = utils.EMOTION_N_CLASSES
+    input_dim = utils.PREBOTTLENECK_LATENT_EMBEDDING_DIM if args.get("use_prebottleneck_latents", False) else utils.LATENT_EMBEDDING_DIM
+    output_dim = utils.N_CLASSES_BY_TASK[task]
     prepool = args.get("prepool", False)
     model_name = args.get("model_name")
 
+    # determine small or large
+    use_large = "large" in model_name
+    use_small = "small" in model_name
+    if use_large and use_small: # don't want them both at once
+        use_small = False
+
     # create transformer model
     if use_transformer:
-        model = EmotionTransformer(
+        model = CustomTransformer(
             input_dim = input_dim, output_dim = output_dim,
-            max_seq_len = utils.EMOTION_MAX_SEQ_LEN,
-            heads = utils.TRANSFORMER_HEADS,
-            layers = utils.TRANSFORMER_LAYERS,
-            dropout = utils.TRANSFORMER_DROPOUT,
-            feedforward_layers = utils.TRANSFORMER_FEEDFORWARD_LAYERS,
+            max_seq_len = utils.MAX_SEQ_LEN_BY_TASK[task],
+            use_large = use_large, use_small = use_small,
         )
 
     # create MLP model
     else:
-        model = EmotionMLP(
+        model = CustomMLP(
             input_dim = input_dim, output_dim = output_dim,
             prepool = prepool,
-            use_large = "large" in model_name, use_small = "small" in model_name,
+            use_large = use_large, use_small = use_small,
         )
 
     # return the correct model

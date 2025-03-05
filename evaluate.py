@@ -1,10 +1,10 @@
 # README
 # Phillip Long
-# February 22, 2025
+# March 4, 2025
 
-# Evaluate an emotion recognition model.
+# Evaluate a model.
 
-# python /home/pnlong/jingyue_latents/emotion/evaluate.py
+# python /home/pnlong/jingyue_latents/evaluate.py
 
 # IMPORTS
 ##################################################
@@ -13,7 +13,7 @@ import argparse
 import logging
 import pprint
 import sys
-from os.path import exists, dirname
+from os.path import exists, dirname, basename
 from multiprocessing import cpu_count # for calculating num_workers
 import pandas as pd
 import torch
@@ -25,9 +25,8 @@ warnings.simplefilter(action = "ignore", category = FutureWarning)
 from os.path import dirname, realpath
 import sys
 sys.path.insert(0, dirname(realpath(__file__)))
-sys.path.insert(0, dirname(dirname(realpath(__file__))))
 
-from dataset import EmotionDataset
+from dataset import get_dataset
 from model import get_model, get_predictions_from_outputs
 import utils
 
@@ -39,15 +38,25 @@ import utils
 
 def parse_args(args = None, namespace = None):
     """Parse command-line arguments."""
+
+    # create argument parser
     parser = argparse.ArgumentParser(prog = "Evaluate", description = "Evaluate all models.")
-    parser.add_argument("-pt", "--paths_test", default = f"{utils.EMOTION_DIR}/{utils.DATA_DIR_NAME}/{utils.TEST_PARTITION_NAME}.txt", type = str, help = ".txt file with absolute filepaths in testing partition")
-    parser.add_argument("-ml", "--models_list", default = f"{utils.EMOTION_DIR}/{utils.MODELS_FILE_NAME}.txt", type = str, help = "Filepath to list of model names (which are also subdirectories of the directory in which the file resides)")
+    parser.add_argument("-t", "--task", required = True, choices = utils.ALL_TASKS, type = str, help = "Name of task")
     # others
     parser.add_argument("-bs", "--batch_size", default = utils.BATCH_SIZE, type = int, help = "Batch size for data loader")
     parser.add_argument("-g", "--gpu", default = -1, type = int, help = "GPU number")
     parser.add_argument("-j", "--jobs", default = int(cpu_count() / 4), type = int, help = "Number of workers for data loading")
     parser.add_argument("-r", "--reset", action = "store_true", help = "Whether or not to re-evaluate")
-    return parser.parse_args(args = args, namespace = namespace)
+    
+    # parse arguments
+    args = parser.parse_args(args = args, namespace = namespace)
+    
+    # infer other arguments
+    args.paths_test = f"{utils.DIR_BY_TASK[args.task]}/{utils.DATA_DIR_NAME}/{utils.TEST_PARTITION_NAME}.txt"
+    args.models_list = f"{utils.DIR_BY_TASK[args.task]}/{utils.MODELS_FILE_NAME}.txt"        
+
+    # return parsed arguments
+    return args
 
 ##################################################
 
@@ -65,10 +74,11 @@ if __name__ == "__main__":
 
     # ensure paths test exist
     if not exists(args.paths_test):
-        raise ValueError("Invalid --paths_test argument. File does not exist.")
+        raise ValueError(f"Invalid --paths_test argument: `{args.paths_test}`. File does not exist.")
 
     # get output directory
     output_dir = dirname(args.models_list)
+    task = basename(output_dir)
 
     # get directories to eval
     models = utils.load_txt(filepath = args.models_list)
@@ -92,15 +102,17 @@ if __name__ == "__main__":
     loss_fn = torch.nn.CrossEntropyLoss()
 
     # output files
+    evaluation_loss_output_columns = utils.EVALUATION_LOSS_OUTPUT_COLUMNS_BY_TASK[task]
+    evaluation_accuracy_output_columns = utils.EVALUATION_ACCURACY_OUTPUT_COLUMNS_BY_TASK[task]
     loss_output_filepath = f"{output_dir}/evaluation.{utils.LOSS_STATISTIC_NAME}.csv"
     if not exists(loss_output_filepath) or args.reset: # if column names need to be written
-        previous_loss_output = pd.DataFrame(columns = utils.EMOTION_EVALUATION_LOSS_OUTPUT_COLUMNS)
+        previous_loss_output = pd.DataFrame(columns = evaluation_loss_output_columns)
         previous_loss_output.to_csv(path_or_buf = loss_output_filepath, sep = ",", na_rep = utils.NA_STRING, header = True, index = False, mode = "w")
     else:
         previous_loss_output = pd.read_csv(filepath_or_buffer = loss_output_filepath, sep = ",", na_values = utils.NA_STRING, header = 0, index_col = False)
     accuracy_output_filepath = f"{output_dir}/evaluation.{utils.ACCURACY_STATISTIC_NAME}.csv"
     if not exists(accuracy_output_filepath) or args.reset: # if column names need to be written
-        pd.DataFrame(columns = utils.EMOTION_EVALUATION_LOSS_OUTPUT_COLUMNS).to_csv(path_or_buf = accuracy_output_filepath, sep = ",", na_rep = utils.NA_STRING, header = True, index = False, mode = "w")
+        pd.DataFrame(columns = evaluation_loss_output_columns).to_csv(path_or_buf = accuracy_output_filepath, sep = ",", na_rep = utils.NA_STRING, header = True, index = False, mode = "w")
 
     ##################################################
 
@@ -144,7 +156,7 @@ if __name__ == "__main__":
             del train_args_filepath
 
             # load dataset and data loader
-            dataset = EmotionDataset(directory = train_args["data_dir"], paths = args.paths_test, pool = train_args["prepool"])
+            dataset = get_dataset(task = task, directory = train_args["data_dir"], paths = args.paths_test, pool = train_args["prepool"])
             data_loader = torch.utils.data.DataLoader(
                 dataset = dataset,
                 batch_size = args.batch_size,
@@ -213,13 +225,13 @@ if __name__ == "__main__":
                     # loss
                     loss_batch_output = pd.DataFrame(
                         data = dict(zip(
-                            utils.EMOTION_EVALUATION_LOSS_OUTPUT_COLUMNS,
+                            evaluation_loss_output_columns,
                             (
                                 model_column, # model
                                 paths, # path
                                 utils.rep(x = loss, times = current_batch_size), # loss
                             ))),
-                        columns = utils.EMOTION_EVALUATION_LOSS_OUTPUT_COLUMNS,
+                        columns = evaluation_loss_output_columns,
                     )
                     loss_batch_output = loss_batch_output[incomplete_paths_in_batch].reset_index(drop = True) # only write paths that haven't been written yet
                     loss_batch_output.to_csv(path_or_buf = loss_output_filepath, sep = ",", na_rep = utils.NA_STRING, header = False, index = False, mode = "a")
@@ -227,7 +239,7 @@ if __name__ == "__main__":
                     # accuracy
                     accuracy_batch_output = pd.DataFrame(
                         data = dict(zip(
-                            utils.EMOTION_EVALUATION_ACCURACY_OUTPUT_COLUMNS,
+                            evaluation_accuracy_output_columns,
                             (
                                 model_column, # model
                                 paths, # path
@@ -235,7 +247,7 @@ if __name__ == "__main__":
                                 predictions.cpu().tolist(), # actual
                                 correctness.cpu().tolist(), # is correct
                             ))),
-                        columns = utils.EMOTION_EVALUATION_ACCURACY_OUTPUT_COLUMNS,
+                        columns = evaluation_accuracy_output_columns,
                     )
                     accuracy_batch_output = accuracy_batch_output[incomplete_paths_in_batch].reset_index(drop = True) # only write paths that haven't been written yet
                     accuracy_batch_output.to_csv(path_or_buf = accuracy_output_filepath, sep = ",", na_rep = utils.NA_STRING, header = False, index = False, mode = "a")

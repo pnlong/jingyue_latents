@@ -1,10 +1,10 @@
 # README
 # Phillip Long
-# February 22, 2025
+# March 4, 2025
 
-# Train an emotion recognition model.
+# Train a model.
 
-# python /home/pnlong/jingyue_latents/emotion/train.py
+# python /home/pnlong/jingyue_latents/train.py
 
 # IMPORTS
 ##################################################
@@ -28,9 +28,8 @@ warnings.simplefilter(action = "ignore", category = FutureWarning)
 from os.path import dirname, realpath
 import sys
 sys.path.insert(0, dirname(realpath(__file__)))
-sys.path.insert(0, dirname(dirname(realpath(__file__))))
 
-from dataset import EmotionDataset
+from dataset import get_dataset
 from model import get_model, get_predictions_from_outputs
 import utils
 
@@ -42,13 +41,13 @@ import utils
 
 def parse_args(args = None, namespace = None):
     """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(prog = "Train", description = "Train a Model.")
-    parser.add_argument("-pt", "--paths_train", default = f"{utils.EMOTION_DIR}/{utils.DATA_DIR_NAME}/{utils.TRAIN_PARTITION_NAME}.txt", type = str, help = ".txt file with absolute filepaths in training partition")
-    parser.add_argument("-pv", "--paths_valid", default = f"{utils.EMOTION_DIR}/{utils.DATA_DIR_NAME}/{utils.VALID_PARTITION_NAME}.txt", type = str, help = ".txt file with absolute filepaths in validation partition")
-    parser.add_argument("-dd", "--data_dir", default = f"{utils.EMOTION_DIR}/{utils.DATA_DIR_NAME}/{utils.DATA_SUBDIR_NAME}", type = str, help = "Directory that contains files described in --paths_train and --paths_valid")
-    parser.add_argument("-o", "--output_dir", default = utils.EMOTION_DIR, type = str, help = "Output directory")
-    parser.add_argument("-mn", "--model_name", default = utils.EMOTION_MODEL_NAME, type = str, help = "Name of the model")
+    
+    # create argument parser
+    parser = argparse.ArgumentParser(prog = "Train", description = "Train a model.")
+    parser.add_argument("-t", "--task", required = True, choices = utils.ALL_TASKS, type = str, help = "Name of task")
+    parser.add_argument("-mn", "--model_name", default = utils.DEFAULT_MODEL_NAME, type = str, help = "Name of the model")
     # training 
+    parser.add_argument("-up", "--use_prebottleneck_latents", action = "store_true", help = "Whether or not to use prebottleneck latents")
     parser.add_argument("-pp", "--prepool", action = "store_true", help = "Whether or not to prepool `num_bar` dimension before feeding data to model (as opposed to after)")
     parser.add_argument("-ut", "--use_transformer", action = "store_true", help = "Whether or not to use a transformer model")
     parser.add_argument("-bs", "--batch_size", default = utils.BATCH_SIZE, type = int, help = "Batch size for data loader")
@@ -58,16 +57,25 @@ def parse_args(args = None, namespace = None):
     parser.add_argument("--early_stopping_tolerance", default = utils.EARLY_STOPPING_TOLERANCE, type = int, help = "Number of extra validation rounds before early stopping")
     parser.add_argument("-wd", "--weight_decay", default = utils.WEIGHT_DECAY, type = float, help = "Weight decay for L2 regularization")
     parser.add_argument("-lr", "--learning_rate", default = utils.LEARNING_RATE, type = float, help = "Learning rate")
-    parser.add_argument("--lr_warmup_steps", default = utils.LEARNING_RATE_WARMUP_STEPS, type = int, help = "Learning rate warmup steps")
-    parser.add_argument("--lr_decay_steps", default = utils.LEARNING_RATE_DECAY_STEPS, type = int, help = "Learning rate decay end steps")
-    parser.add_argument("--lr_decay_multiplier", default = utils.LEARNING_RATE_DECAY_MULTIPLIER, type = float, help = "Learning rate multiplier at the end")
     # others
     parser.add_argument("-g", "--gpu", default = -1, type = int, help = "GPU number")
     parser.add_argument("-j", "--jobs", default = int(cpu_count() / 4), type = int, help = "Number of workers for data loading")
-    parser.add_argument("-r", "--resume", default = None, type = str, help = "Provide the WANDB run name/id to resume a run")
+    parser.add_argument("-rn", "--run_name", default = None, type = str, help = "Provide the WANDB run name/id to resume a run")
     parser.add_argument("-ir", "--infer_run_name", action = "store_true", help = "Whether or not to infer the WANDB run name when resuming")
     parser.add_argument("--use_wandb", action = "store_true", help = "Whether or not to log progress with WANDB")
-    return parser.parse_args(args = args, namespace = namespace)
+    
+    # parse arguments
+    args = parser.parse_args(args = args, namespace = namespace)
+
+    # infer other arguments
+    args.paths_train = f"{utils.DIR_BY_TASK[args.task]}/{utils.DATA_DIR_NAME}/{utils.TRAIN_PARTITION_NAME}.txt"
+    args.paths_valid = f"{utils.DIR_BY_TASK[args.task]}/{utils.DATA_DIR_NAME}/{utils.VALID_PARTITION_NAME}.txt"
+    args.data_dir = f"{utils.DIR_BY_TASK[args.task]}/{utils.DATA_DIR_NAME}/{utils.PREBOTTLENECK_DATA_SUBDIR_NAME if args.use_prebottleneck_latents else utils.DATA_SUBDIR_NAME}"
+    args.output_dir = utils.DIR_BY_TASK[args.task]
+    args.resume = (args.run_name != None)
+
+    # return parsed arguments
+    return args
 
 ##################################################
 
@@ -83,26 +91,28 @@ if __name__ == "__main__":
     # parse the command-line arguments
     args = parse_args()
 
-    # infer extra arguments
-    args.using_prebottleneck_latents = (utils.PREBOTTLENECK_DATA_SUBDIR_NAME == basename(args.data_dir)) # whether prebottleneck latents are being used
-
     # check filepath arguments
     if not exists(args.paths_train):
-        raise ValueError("Invalid --paths_train argument. File does not exist.")
+        raise ValueError(f"Invalid --paths_train argument: `{args.paths_train}`. File does not exist.")
     if not exists(args.paths_valid):
-        raise ValueError("Invalid --paths_valid argument. File does not exist.")
-    run_name = args.resume # get runname
-    args.resume = (run_name != None) # convert to boolean value
-    
+        raise ValueError(f"Invalid --paths_valid argument: `{args.paths_valid}`. File does not exist.")
+    if args.use_transformer and args.prepool:
+        raise RuntimeError(f"--args.use_transformer and --args.prepool cannot both be true.")
+    run_name = args.run_name
+
     # get the specified device
     device = torch.device(f"cuda:{abs(args.gpu)}" if (torch.cuda.is_available() and args.gpu != -1) else "cpu")
     print(f"Using device: {device}")
 
+    # set some variables
+    output_parent_dir = args.output_dir
+    task = basename(output_parent_dir)
+
     # create the dataset and data loader
     print(f"Creating the data loader...")
     dataset = {
-        utils.TRAIN_PARTITION_NAME: EmotionDataset(directory = args.data_dir, paths = args.paths_train, pool = args.prepool),
-        utils.VALID_PARTITION_NAME: EmotionDataset(directory = args.data_dir, paths = args.paths_valid, pool = args.prepool),
+        utils.TRAIN_PARTITION_NAME: get_dataset(task = task, directory = args.data_dir, paths = args.paths_train, pool = args.prepool),
+        utils.VALID_PARTITION_NAME: get_dataset(task = task, directory = args.data_dir, paths = args.paths_train, pool = args.prepool),
         }
     data_loader = {
         utils.TRAIN_PARTITION_NAME: torch.utils.data.DataLoader(dataset = dataset[utils.TRAIN_PARTITION_NAME], batch_size = args.batch_size, shuffle = True, num_workers = args.jobs, collate_fn = dataset[utils.TRAIN_PARTITION_NAME].collate),
@@ -116,7 +126,6 @@ if __name__ == "__main__":
     n_parameters_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad) # statistics (model size)
 
     # determine the output directory based on arguments
-    output_parent_dir = args.output_dir
     output_dir_name = args.model_name.replace(" ", "_")
     output_dir = f"{output_parent_dir}/{output_dir_name}" # custom output directory based on arguments
     if not exists(output_dir):
@@ -127,9 +136,8 @@ if __name__ == "__main__":
 
     # start a new wandb run to track the script
     if args.use_wandb:
-        group_name = basename(output_parent_dir)
         if args.infer_run_name:
-            run_names_in_group = [run.name for run in wandb.Api().runs(f"philly/{utils.WANDB_PROJECT_NAME}", filters = {"group": group_name})]
+            run_names_in_group = [run.name for run in wandb.Api().runs(f"philly/{utils.WANDB_PROJECT_NAME}", filters = {"group": task})]
             run_names_in_group = list(filter(lambda name: name.startswith(output_dir_name), run_names_in_group))
             get_datetime_value_from_run_name = lambda run_name: datetime.strptime(run_name[len(output_dir_name) + 1:], utils.WANDB_RUN_NAME_FORMAT_STRING).timestamp()
             run_names_in_group = sorted(run_names_in_group, key = get_datetime_value_from_run_name)[::-1]
@@ -139,7 +147,7 @@ if __name__ == "__main__":
         if run_name is None: # in the event we need to create a new run name
             current_datetime = datetime.now().strftime(utils.WANDB_RUN_NAME_FORMAT_STRING)
             run_name = f"{output_dir_name}-{current_datetime}"
-        run = wandb.init(config = dict(vars(args), **{"n_parameters": n_parameters, "n_parameters_trainable": n_parameters_trainable}), resume = "allow", project = utils.WANDB_PROJECT_NAME, group = group_name, name = run_name, id = run_name) # set project title, configure with hyperparameters
+        run = wandb.init(config = dict(vars(args), **{"n_parameters": n_parameters, "n_parameters_trainable": n_parameters_trainable}), resume = "allow", project = utils.WANDB_PROJECT_NAME, group = task, name = run_name, id = run_name) # set project title, configure with hyperparameters
 
     # set up the logger
     logging_output_filepath = f"{output_dir}/train.log"
@@ -180,12 +188,6 @@ if __name__ == "__main__":
     if args.resume and exists(best_optimizer_filepath[utils.VALID_PARTITION_NAME]):
         optimizer.load_state_dict(torch.load(f = best_optimizer_filepath[utils.VALID_PARTITION_NAME], weights_only = True))
 
-    # create the scheduler
-    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer = optimizer, lr_lambda = lambda step: utils.get_lr_multiplier(step = step, warmup_steps = args.lr_warmup_steps, decay_end_steps = args.lr_decay_steps, decay_end_multiplier = args.lr_decay_multiplier))
-    best_scheduler_filepath = {partition: f"{checkpoints_dir}/best_scheduler.{partition}.pth" for partition in utils.RELEVANT_TRAINING_PARTITIONS}
-    if args.resume and exists(best_scheduler_filepath[utils.VALID_PARTITION_NAME]):
-        scheduler.load_state_dict(torch.load(f = best_scheduler_filepath[utils.VALID_PARTITION_NAME], weights_only = True))
-    
     ##################################################
 
 
@@ -261,7 +263,6 @@ if __name__ == "__main__":
 
             # adjust learning weights
             optimizer.step() # update parameters
-            scheduler.step() # update scheduler
 
             # compute accuracy
             predictions = get_predictions_from_outputs(outputs = outputs)
@@ -379,7 +380,6 @@ if __name__ == "__main__":
                 logging.info(f"Best {partition}_{utils.LOSS_STATISTIC_NAME} so far!")
                 torch.save(obj = model.state_dict(), f = best_model_filepath[partition]) # save the model
                 torch.save(obj = optimizer.state_dict(), f = best_optimizer_filepath[partition]) # save the optimizer state
-                torch.save(obj = scheduler.state_dict(), f = best_scheduler_filepath[partition]) # save the scheduler state
                 if args.early_stopping: # reset the early stopping counter if we found a better model
                     count_early_stopping = 0
                     is_an_improvement = True # we only care about the lack of improvement when we are thinking about early stopping, so turn off this boolean flag, since there was an improvement

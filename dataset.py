@@ -1,16 +1,16 @@
 # README
 # Phillip Long
-# February 22, 2025
+# March 4, 2025
 
-# Prepare data for training an emotion recognition model.
+# Prepare data for training a model.
 
-# python /home/pnlong/jingyue_latents/emotion/dataset.py
+# python /home/pnlong/jingyue_latents/dataset.py
 
 # IMPORTS
 ##################################################
 
 from typing import List
-from os.path import exists
+from os.path import exists, dirname, realpath
 from os import mkdir
 from shutil import rmtree
 import argparse
@@ -18,6 +18,7 @@ import logging
 import multiprocessing
 from tqdm import tqdm
 import numpy as np
+import pprint
 
 import torch
 import torch.utils.data
@@ -25,28 +26,31 @@ import torch.utils.data
 from os.path import dirname, realpath
 import sys
 sys.path.insert(0, dirname(realpath(__file__)))
-sys.path.insert(0, dirname(dirname(realpath(__file__))))
 
 import utils
 
 ##################################################
 
 
-# DATASET CLASS
+# CUSTOM DATASET CLASS
 ##################################################
 
-class EmotionDataset(torch.utils.data.Dataset):
+class CustomDataset(torch.utils.data.Dataset):
 
     # intializer
     def __init__(
         self,
         directory: str, # directory containing relevant paths
         paths: str, # path to file with relevant path basenames
+        indexer: dict, # dictionary that maps labels to indicies
+        max_seq_len: int = 1, # maximum sequence length (in bars)
         pool: bool = False, # whether to pool (average) the num_bar dimension
     ):
         super().__init__()
         self.directory = directory
         self.paths = utils.load_txt(filepath = paths)
+        self.indexer = indexer
+        self.max_seq_len = max_seq_len
         self.pool = pool
 
     # length attribute
@@ -61,20 +65,24 @@ class EmotionDataset(torch.utils.data.Dataset):
         path = f"{self.directory}/{base}"
 
         # get label from path
-        label = utils.EMOTION_ID_TO_INDEX[base.split("_")[0]] # Q3_77z6Ep3aOmg_1.pkl
+        label = base.split("_")[0] # extract label from base (e.g. Q3_77z6Ep3aOmg_1.pkl)
+        label = self.indexer[label] # convert label to index
 
         # load in sequence as tensor
         seq = torch.load(f = path, weights_only = True).to(utils.DATA_TYPE)
 
         # pool if necessary
-        if self.pool:
+        if self.pool and len(seq.shape) == 2:
             seq = torch.mean(input = seq, dim = 0) # mean pool
+        elif not self.pool and len(seq.shape) == 1:
+            seq = seq.unsqueeze(dim = 0) # add a num_bar dimension if there isn't one
 
         # return dictionary of sequence, label, and path
         return {
             "seq": seq,
             "label": label,
             "path": path,
+            "max_seq_len": self.max_seq_len,
         }
     
     # collate method
@@ -82,17 +90,20 @@ class EmotionDataset(torch.utils.data.Dataset):
     def collate(cls, batch: List[dict]) -> dict:
 
         # aggregate list of sequences
-        seqs, labels, paths = utils.transpose(l = [sample.values() for sample in batch])
+        seqs, labels, paths, max_seq_len = utils.transpose(l = [sample.values() for sample in batch])
+        
+        # max_seq_len is constant across all samples, so just grab the first one
+        max_seq_len = max_seq_len[0]
 
         # if pooling was applied
         if len(seqs[0].shape) == 1:
             seqs = torch.stack(tensors = seqs, dim = 0)
-            mask = torch.ones(size = (len(labels),))
+            mask = torch.ones(size = [len(labels)])
 
         # if pooling was not applied
         else:
-            seqs = utils.pad(seqs = seqs, length = utils.EMOTION_MAX_SEQ_LEN)
-            mask = utils.mask(seqs = seqs, length = utils.EMOTION_MAX_SEQ_LEN)
+            seqs = utils.pad(seqs = seqs, length = max_seq_len)
+            mask = utils.mask(seqs = seqs, length = max_seq_len)
 
         # return dictionary of sequences, labels, masks, and paths
         return {
@@ -105,19 +116,59 @@ class EmotionDataset(torch.utils.data.Dataset):
 ##################################################
 
 
+# GET THE CORRECT DATASET GIVEN SOME ARGUMENTS
+##################################################
+
+def get_dataset(
+        task: str, # relevant task
+        directory: str, # directory containing relevant paths
+        paths: str, # path to file with relevant path basenames
+        pool: bool = False, # whether to pool (average) the num_bar dimension
+    ) -> torch.utils.data.Dataset:
+    """
+    Helper function that returns the correct dataset object
+    given some arguments.
+    """
+
+    # match the task to the correct dataset arguments
+    indexer = utils.INDEXER_BY_TASK[task]
+    max_seq_len = utils.MAX_SEQ_LEN_BY_TASK[task]
+    pool = pool if task != utils.CHORD_DIR_NAME else False # ensuring pooling is off for chord task
+    
+    # return dataset with relevant arguments
+    return CustomDataset(
+        directory = directory, paths = paths,
+        indexer = indexer, max_seq_len = max_seq_len,
+        pool = pool,
+    )
+
+##################################################
+
+
 # ARGUMENTS
 ##################################################
 
 def parse_args(args = None, namespace = None):
     """Parse command-line arguments."""
+
+    # create argument parser
     parser = argparse.ArgumentParser(prog = "Data", description = "Wrangle data.")
-    parser.add_argument("-d", "--data_dir", default = f"{utils.EMOTION_DATA_DIR}/data_rvq_tokens", type = str, help = "Directory containing pickled data files")
-    parser.add_argument("-p", "--prebottleneck_data_dir", default = f"{utils.EMOTION_DATA_DIR}/data_encoder_latents", type = str, help = "Directory containing pickled prebottleneck data files")
-    parser.add_argument("-s", "--partitions_dir", default = f"{utils.EMOTION_DATA_DIR}/data_splits_new", type = str, help = "Directory containing pickled training and validation filepaths")
-    parser.add_argument("-o", "--output_dir", default = utils.EMOTION_DIR, type = str, help = "Output directory")
+    parser.add_argument("-t", "--task", required = True, choices = utils.ALL_TASKS, type = str, help = "Name of task")
     parser.add_argument("-r", "--reset", action = "store_true", help = "Whether or not to recreate files")
     parser.add_argument("-j", "--jobs", default = int(multiprocessing.cpu_count() / 4), type = int, help = "Number of workers for data loading")
-    return parser.parse_args(args = args, namespace = namespace)
+    
+    # parse arguments
+    args = parser.parse_args(args = args, namespace = namespace)
+
+    # infer other arguments
+    jingyue_data_symlinks_dir = utils.JINGYUE_DATA_SYMLINKS_DIR_BY_TASK[args.task]
+    args.data_dir = f"{jingyue_data_symlinks_dir}/{utils.JINGYUE_DATA_SYMLINK_NAME}"
+    args.prebottleneck_data_dir = f"{jingyue_data_symlinks_dir}/{utils.JINGYUE_PREBOTTLENECK_DATA_SYMLINK_NAME}"
+    args.partitions_dir = f"{jingyue_data_symlinks_dir}/{utils.JINGYUE_SPLITS_SYMLINK_NAME}"
+    args.output_dir = utils.DIR_BY_TASK[args.task]
+
+    # return parsed arguments
+    return args
 
 ##################################################
 
@@ -135,6 +186,9 @@ if __name__ == "__main__":
 
     # set up logging
     logging.basicConfig(level = logging.INFO, format = "%(message)s")
+
+    # log arguments
+    logging.info(f"Using arguments:\n{pprint.pformat(vars(args))}")
 
     # create output dir
     def directory_creator(directory: str):
