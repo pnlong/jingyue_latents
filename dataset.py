@@ -90,10 +90,8 @@ class CustomDataset(torch.utils.data.Dataset):
     def collate(cls, batch: List[dict]) -> dict:
 
         # aggregate list of sequences
-        seqs, labels, paths, max_seq_len = utils.transpose(l = [sample.values() for sample in batch])
-        
-        # max_seq_len is constant across all samples, so just grab the first one
-        max_seq_len = max_seq_len[0]
+        seqs, labels, paths = utils.transpose(l = [(sample["seq"], sample["label"], sample["path"]) for sample in batch])
+        max_seq_len = batch[0]["max_seq_len"] # max_seq_len is constant across all samples, so just grab the first one
 
         # if pooling was applied
         if len(seqs[0].shape) == 1:
@@ -197,6 +195,7 @@ if __name__ == "__main__":
             if exists(directory):
                 rmtree(directory, ignore_errors = True)
             mkdir(directory)
+    directory_creator(directory = args.output_dir) # create output directory
     splits_dir = f"{args.output_dir}/{utils.DATA_DIR_NAME}"
     directory_creator(directory = splits_dir)
     data_dir = f"{splits_dir}/{utils.DATA_SUBDIR_NAME}"
@@ -212,13 +211,19 @@ if __name__ == "__main__":
 
     # read in paths
     load_pickle = lambda filepath: list(map(lambda path: ".".join(path.split(".")[:-1]), utils.load_pickle(filepath = filepath))) # load pickle, removing filetype while at it
-    train_stems = load_pickle(filepath = f"{args.partitions_dir}/train.pkl") # read in training file
-    valid_stems = load_pickle(filepath = f"{args.partitions_dir}/valid.pkl") # read in validation file
-    test_stems = load_pickle(filepath = f"{args.partitions_dir}/test.pkl") # read in testing file
-    all_stems = train_stems + valid_stems + test_stems # list of all path stems
+    stems_by_partition = [
+        load_pickle(filepath = f"{args.partitions_dir}/train.pkl"), # read in training file
+        load_pickle(filepath = f"{args.partitions_dir}/valid.pkl"), # read in validation file
+        load_pickle(filepath = f"{args.partitions_dir}/test.pkl"), # read in testing file
+    ]
+    all_stems = sum(stems_by_partition, []) # list of all path stems
     convert_stems_to_absolute_paths = lambda directory: list(map(lambda stem: f"{directory}/{stem}." + (utils.TENSOR_FILETYPE if directory in (data_dir, prebottleneck_data_dir) else utils.PICKLE_FILETYPE), all_stems)) # helper function
     n_stems = len(all_stems) # number of stems
     del load_pickle # free up memory
+
+    # get ranges of each partition in all_stems
+    partition_ranges_in_all_stems = np.cumsum(list(map(len, stems_by_partition))).tolist() # cumulative sum
+    partition_ranges_in_all_stems = {partition: (start, end) for partition, start, end in zip(utils.ALL_PARTITIONS, [0] + partition_ranges_in_all_stems[:-1], partition_ranges_in_all_stems)}
 
     ##################################################
 
@@ -245,10 +250,10 @@ if __name__ == "__main__":
 
     # print longest sequence length
     logging.info(f"Longest song length (in number of bars): {max(song_lengths)}")
-    logging.info(f"{n_stems} songs (Train: {len(train_stems)}, Validation: {len(valid_stems)}, Test: {len(test_stems)}).")
+    logging.info(f"{n_stems} songs (" + ", ".join([f"{partition.lower().title()}: {partition_range[-1] - partition_range[0]}" for partition, partition_range in partition_ranges_in_all_stems.items()]) + ").") # number of songs per partition
 
     # free up memory
-    del get_song_length, song_lengths
+    del get_song_length
 
     ##################################################
 
@@ -288,7 +293,7 @@ if __name__ == "__main__":
     save_paths(input_dir = args.prebottleneck_data_dir, output_dir = prebottleneck_data_dir, desc = "Extracting prebottleneck tensors")
     
     # free up memory
-    del all_stems, convert_stems_to_absolute_paths, n_stems, save_path, save_paths
+    del convert_stems_to_absolute_paths, n_stems, save_path, save_paths, song_lengths
 
     ##################################################
 
@@ -297,24 +302,20 @@ if __name__ == "__main__":
     ##################################################
 
     # output paths
-    train_output_path = f"{splits_dir}/{utils.TRAIN_PARTITION_NAME}.txt"
-    valid_output_path = f"{splits_dir}/{utils.VALID_PARTITION_NAME}.txt"
-    test_output_path = f"{splits_dir}/{utils.TEST_PARTITION_NAME}.txt"
+    output_path_by_partition = {partition: f"{splits_dir}/{partition}.txt" for partition in partition_ranges_in_all_stems.keys()}
 
     # write to file
-    if not all(map(exists, (train_output_path, valid_output_path, test_output_path))) or args.reset:
+    if not all(map(exists, output_path_by_partition.values())) or args.reset:
         logging.info(utils.MAJOR_SEPARATOR_LINE)
-        save_txt = lambda filepath, data: utils.save_txt(filepath = filepath, data = list(map(lambda stem: f"{stem}.{utils.TENSOR_FILETYPE}", data)))
-        save_txt(filepath = train_output_path, data = train_stems)
-        logging.info(f"Wrote training partition to {train_output_path}.")
-        save_txt(filepath = valid_output_path, data = valid_stems)
-        logging.info(f"Wrote validation partition to {valid_output_path}.")
-        save_txt(filepath = test_output_path, data = test_stems)
-        logging.info(f"Wrote test partition to {test_output_path}.")
-        del save_txt # free up memory
+        for partition in output_path_by_partition.keys():
+            output_path = output_path_by_partition[partition]
+            data = all_stems[partition_ranges_in_all_stems[partition][0]:partition_ranges_in_all_stems[partition][-1]] # extract correct range for the partition
+            data = list(map(lambda stem: f"{stem}.{utils.TENSOR_FILETYPE}", data)) # convert from stems to basenames
+            utils.save_txt(filepath = output_path, data = data)
+            logging.info(f"Wrote {partition} partition to {output_path}.")
 
     # free up memory
-    del train_stems, valid_stems, test_stems
+    del all_stems
 
     ##################################################
 
@@ -323,48 +324,58 @@ if __name__ == "__main__":
     ##################################################
 
     # test dataset with different pooling values
-    for pool in (False, True):
+    for use_prebottleneck_latents in (False, True):
+        for pool in (False, True):
 
-        # print separator line
-        logging.info(utils.MAJOR_SEPARATOR_LINE)
-        logging.info("Pooling is " + ("ON" if pool else "OFF") + ".")
+            # print separator line
+            logging.info(utils.MAJOR_SEPARATOR_LINE)
+            logging.info("Using " + ("prebottleneck " if use_prebottleneck_latents else "") + "latents.")
+            logging.info("Pooling is " + ("ON" if pool else "OFF") + ".")
 
-        # create dataset
-        dataset = EmotionDataset(
-            directory = data_dir,
-            paths = valid_output_path,
-            pool = pool,
-        )
-        data_loader = torch.utils.data.DataLoader(
-            dataset = dataset,
-            batch_size = 8,
-            shuffle = True,
-            num_workers = args.jobs,
-            collate_fn = dataset.collate,
-        )
+            # create dataset
+            dataset = get_dataset(
+                task = args.task,
+                directory = f"{utils.DIR_BY_TASK[args.task]}/{utils.DATA_DIR_NAME}/{utils.PREBOTTLENECK_DATA_SUBDIR_NAME if use_prebottleneck_latents else utils.DATA_SUBDIR_NAME}",
+                paths = output_path_by_partition[utils.VALID_PARTITION_NAME],
+                pool = pool,
+            )
+            data_loader = torch.utils.data.DataLoader(
+                dataset = dataset,
+                batch_size = 8,
+                shuffle = True,
+                num_workers = args.jobs,
+                collate_fn = dataset.collate,
+            )
 
-        # iterate over the data loader
-        n_batches = 0
-        n_samples = 0
-        for i, batch in enumerate(data_loader):
+            # iterate over the data loader
+            n_batches = 0
+            n_samples = 0
+            for i, batch in enumerate(data_loader):
 
-            # update tracker variables
-            n_batches += 1
-            n_samples += len(batch["seq"])
+                # update tracker variables
+                n_batches += 1
+                n_samples += len(batch["seq"])
 
-            # print example on first batch
-            if i == 0:
-                logging.info("Example on the validation partition:")
-                inputs, labels, mask, paths = batch["seq"], batch["label"], batch["mask"], batch["path"]
-                logging.info(f"Shape of data: {tuple(inputs.shape)}")
-                # logging.info(f"Data: {inputs}")
-                logging.info(f"Shape of labels: {tuple(labels.shape)}")
-                # logging.info(f"Labels: {labels}")
-                logging.info(f"Shape of mask: {tuple(mask.shape)}")
-                logging.info(f"Shape of paths: {len(paths)}")
+                # print example on first batch
+                if i == 0:
+                    logging.info("Example on the validation partition:")
+                    inputs, labels, mask, paths = batch["seq"], batch["label"], batch["mask"], batch["path"]
+                    logging.info(f"Shape of data: {tuple(inputs.shape)}")
+                    # logging.info(f"Data: {inputs}")
+                    logging.info(f"Shape of labels: {tuple(labels.shape)}")
+                    # logging.info(f"Labels: {labels}")
+                    logging.info(f"Shape of mask: {tuple(mask.shape)}")
+                    logging.info(f"Shape of paths: {len(paths)}")
+                    del inputs, labels, mask, paths # free up memory
 
-        # print how many batches were loaded
-        logging.info(f"Successfully loaded {n_batches} batches ({n_samples} samples).")
+            # print how many batches were loaded
+            logging.info(f"Successfully loaded {n_batches} batches ({n_samples} samples).")
+
+            # free up memory
+            del dataset, data_loader, n_batches, n_samples
+    
+    # free up memory
+    del output_path_by_partition
 
     ##################################################
 

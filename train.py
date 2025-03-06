@@ -112,7 +112,7 @@ if __name__ == "__main__":
     print(f"Creating the data loader...")
     dataset = {
         utils.TRAIN_PARTITION_NAME: get_dataset(task = task, directory = args.data_dir, paths = args.paths_train, pool = args.prepool),
-        utils.VALID_PARTITION_NAME: get_dataset(task = task, directory = args.data_dir, paths = args.paths_train, pool = args.prepool),
+        utils.VALID_PARTITION_NAME: get_dataset(task = task, directory = args.data_dir, paths = args.paths_valid, pool = args.prepool),
         }
     data_loader = {
         utils.TRAIN_PARTITION_NAME: torch.utils.data.DataLoader(dataset = dataset[utils.TRAIN_PARTITION_NAME], batch_size = args.batch_size, shuffle = True, num_workers = args.jobs, collate_fn = dataset[utils.TRAIN_PARTITION_NAME].collate),
@@ -307,10 +307,10 @@ if __name__ == "__main__":
 
         # put model into evaluation mode
         model.eval()
+        count = 0 # count number of songs
         with torch.no_grad():
             
             # iterate through validation data loader
-            count = 0 # count number of songs
             for batch in tqdm(iterable = data_loader[utils.VALID_PARTITION_NAME], desc = "Validating"):
 
                 # get input and output pair
