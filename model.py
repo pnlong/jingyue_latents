@@ -75,11 +75,13 @@ class CustomMLP(nn.Module):
 
         # if num_bar dimension wasn't reduced, and we pool ourselves
         else:
-            input = input.flatten(start_dim = 0, end_dim = 1)  # reshape input from (batch_size, num_bar, embedding_dim) to (batch_size * num_bar, embedding_dim)
+            batch_size, num_bar, embedding_dim = input.shape
+            input = input.reshape(batch_size * num_bar, embedding_dim) # reshape input from (batch_size, num_bar, embedding_dim) to (batch_size * num_bar, embedding_dim)
             output = self.mlp(input) # feed input through model, which yields an output of size (batch_size * num_bar, n_classes)
-            output = output.unflatten(dim = 0, sizes = mask.shape) # reshape output to size (batch_size, num_bar, n_classes)
-            output *= mask.unsqueeze(dim = -1) # apply mask (size of (batch_size, num_bar)) to output
+            output = output.reshape(batch_size, num_bar, -1) # reshape output to size (batch_size, num_bar, n_classes)
+            output = output * mask.unsqueeze(dim = -1) # apply mask (size of (batch_size, num_bar)) to output
             logits = output.sum(dim = 1) / mask.sum(dim = -1).unsqueeze(dim = -1) # average output to reduce num_bar dimension; output is now of size (batch_size, n_classes)
+            del batch_size, num_bar, embedding_dim, output # free up memory
 
         # return final logits
         return logits
@@ -152,7 +154,7 @@ class CustomTransformer(nn.Module):
         position_embeddings = self.position_embeddings(position_indicies) # calculate positional embeddings from positions
 
         # wrangle input
-        input += position_embeddings # add positional embeddings to input
+        input = input + position_embeddings # add positional embeddings to input
         
         # passing through transformer
         output = self.transformer(

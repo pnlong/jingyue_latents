@@ -18,6 +18,7 @@ import logging
 import multiprocessing
 from tqdm import tqdm
 import numpy as np
+import random
 import pprint
 
 import torch
@@ -188,6 +189,9 @@ if __name__ == "__main__":
     # log arguments
     logging.info(f"Using arguments:\n{pprint.pformat(vars(args))}")
 
+    # set random seed
+    random.seed(0)
+
     # create output dir
     def directory_creator(directory: str):
         """Helper function for creating relevant directories."""
@@ -217,6 +221,7 @@ if __name__ == "__main__":
         load_pickle(filepath = f"{args.partitions_dir}/test.pkl"), # read in testing file
     ]
     all_stems = sum(stems_by_partition, []) # list of all path stems
+    random.shuffle(all_stems)
     convert_stems_to_absolute_paths = lambda directory: list(map(lambda stem: f"{directory}/{stem}." + (utils.TENSOR_FILETYPE if directory in (data_dir, prebottleneck_data_dir) else utils.PICKLE_FILETYPE), all_stems)) # helper function
     n_stems = len(all_stems) # number of stems
     del load_pickle # free up memory
@@ -309,7 +314,8 @@ if __name__ == "__main__":
         logging.info(utils.MAJOR_SEPARATOR_LINE)
         for partition in output_path_by_partition.keys():
             output_path = output_path_by_partition[partition]
-            data = all_stems[partition_ranges_in_all_stems[partition][0]:partition_ranges_in_all_stems[partition][-1]] # extract correct range for the partition
+            start, end = partition_ranges_in_all_stems[partition] # get start and end indicies of partition
+            data = all_stems[start:end] # extract correct range for the partition
             data = list(map(lambda stem: f"{stem}.{utils.TENSOR_FILETYPE}", data)) # convert from stems to basenames
             utils.save_txt(filepath = output_path, data = data)
             logging.info(f"Wrote {partition} partition to {output_path}.")

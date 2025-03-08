@@ -178,11 +178,11 @@ BATCH_SIZE = 16
 FRONT_PAD = True
 
 # training defaults
-N_STEPS = 100000
-N_VALID_STEPS = 2000
+N_EPOCHS = 100
+N_STEPS = 50000
 EARLY_STOPPING_TOLERANCE = 10
 LEARNING_RATE = 0.0005
-WEIGHT_DECAY = 0.05 # alternatively, 0.01
+WEIGHT_DECAY = 0.1 # alternatively, 0.01
 
 # transformer model defaults
 TRANSFORMER_LAYERS = 6

@@ -51,8 +51,8 @@ def parse_args(args = None, namespace = None):
     parser.add_argument("-pp", "--prepool", action = "store_true", help = "Whether or not to prepool `num_bar` dimension before feeding data to model (as opposed to after)")
     parser.add_argument("-ut", "--use_transformer", action = "store_true", help = "Whether or not to use a transformer model")
     parser.add_argument("-bs", "--batch_size", default = utils.BATCH_SIZE, type = int, help = "Batch size for data loader")
-    parser.add_argument("--steps", default = utils.N_STEPS, type = int, help = "Number of steps")
-    parser.add_argument("--valid_steps", default = utils.N_VALID_STEPS, type = int, help = "Validation frequency")
+    parser.add_argument("--epochs", default = utils.N_EPOCHS, type = int, help = "Number of epochs")
+    parser.add_argument("--steps", default = None, type = int, help = "Number of steps")
     parser.add_argument("--early_stopping", action = "store_true", help = "Whether to use early stopping")
     parser.add_argument("--early_stopping_tolerance", default = utils.EARLY_STOPPING_TOLERANCE, type = int, help = "Number of extra validation rounds before early stopping")
     parser.add_argument("-wd", "--weight_decay", default = utils.WEIGHT_DECAY, type = float, help = "Weight decay for L2 regularization")
@@ -191,7 +191,7 @@ if __name__ == "__main__":
     ##################################################
 
 
-    # TRAINING PROCESS
+    # PREPARE FOR TRAINING PROCESS
     ##################################################
 
     # create a file to record loss/accuracy metrics
@@ -217,11 +217,18 @@ if __name__ == "__main__":
     if args.early_stopping: # stop early?
         count_early_stopping = 0
 
+    ##################################################
+
+
+    # TRAINING PROCESS
+    ##################################################
+
     # print current step
     print(f"Current Step: {step:,}")
 
     # iterate for the specified number of steps
-    train_iterator = iter(data_loader[utils.TRAIN_PARTITION_NAME])
+    if args.steps is None: # infer number of steps if not provided
+        args.steps = args.epochs * len(data_loader[utils.TRAIN_PARTITION_NAME])
     while step < args.steps:
 
         # to store loss/accuracy values
@@ -236,14 +243,7 @@ if __name__ == "__main__":
         # put model into training mode
         model.train()
         count = 0 # count number of songs
-        for _ in (progress_bar := tqdm(iterable = range(args.valid_steps), desc = "Training")):
-
-            # get next batch
-            try:
-                batch = next(train_iterator)
-            except (StopIteration):
-                train_iterator = iter(data_loader[utils.TRAIN_PARTITION_NAME]) # reinitialize dataset iterator
-                batch = next(train_iterator)
+        for batch in (progress_bar := tqdm(iterable = data_loader[utils.TRAIN_PARTITION_NAME], desc = "Training")):
 
             # get input and output pair
             inputs, labels, mask = batch["seq"], batch["label"], batch["mask"]
@@ -283,7 +283,7 @@ if __name__ == "__main__":
             count += current_batch_size
 
             # add to total statistics tracker
-            statistics[utils.LOSS_STATISTIC_NAME][utils.TRAIN_PARTITION_NAME] += loss * current_batch_size
+            statistics[utils.LOSS_STATISTIC_NAME][utils.TRAIN_PARTITION_NAME] += loss
             statistics[utils.ACCURACY_STATISTIC_NAME][utils.TRAIN_PARTITION_NAME] += n_correct_in_batch
 
             # increment step
@@ -311,7 +311,7 @@ if __name__ == "__main__":
         with torch.no_grad():
             
             # iterate through validation data loader
-            for batch in tqdm(iterable = data_loader[utils.VALID_PARTITION_NAME], desc = "Validating"):
+            for batch in (progress_bar := tqdm(iterable = data_loader[utils.VALID_PARTITION_NAME], desc = "Validating")):
 
                 # get input and output pair
                 inputs, labels, mask = batch["seq"], batch["label"], batch["mask"]
@@ -328,16 +328,20 @@ if __name__ == "__main__":
                 # compute accuracy
                 predictions = get_predictions_from_outputs(outputs = outputs)
                 n_correct_in_batch = int(sum(predictions == labels))
+                accuracy = 100 * (n_correct_in_batch / current_batch_size)
+                        
+                # set progress bar
+                progress_bar.set_postfix(loss = f"{loss:8.4f}", accuracy = f"{accuracy:3.2f}%")
 
                 # update count
                 count += current_batch_size
 
                 # add to total statistics tracker
-                statistics[utils.LOSS_STATISTIC_NAME][utils.VALID_PARTITION_NAME] += loss * current_batch_size
+                statistics[utils.LOSS_STATISTIC_NAME][utils.VALID_PARTITION_NAME] += loss
                 statistics[utils.ACCURACY_STATISTIC_NAME][utils.VALID_PARTITION_NAME] += n_correct_in_batch
 
                 # release GPU memory right away
-                del inputs, labels, mask, outputs, loss, predictions, n_correct_in_batch
+                del inputs, labels, mask, outputs, loss, predictions, n_correct_in_batch, accuracy
 
         # compute average loss/accuracy across batches for output data tables (and WANDB if applicable)
         statistics[utils.LOSS_STATISTIC_NAME][utils.VALID_PARTITION_NAME] /= count
