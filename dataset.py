@@ -33,6 +33,47 @@ import utils
 ##################################################
 
 
+# HELPER FUNCTIONS
+##################################################
+
+def pad(seqs: List[torch.Tensor], length: int) -> torch.Tensor:
+    """Front-zero-pad a given list of sequences to the given length."""
+
+    # pad sequences
+    for i, seq in enumerate(seqs):
+        if len(seq) < length: # sequence is shorter than length
+            pad = length - len(seq)
+            pad = (0, 0, pad, 0) if utils.FRONT_PAD else (0, 0, 0, pad)
+            seq = torch.nn.functional.pad(input = seq, pad = pad, mode = "constant", value = 0)
+        else: # sequence is longer than length
+            seq = seq[:length]
+        seqs[i] = seq # update value in sequences
+
+    # stack sequences
+    seqs = torch.stack(tensors = seqs, dim = 0)
+
+    # return padded sequences as single matrix
+    return seqs
+
+def get_mask(seqs: List[torch.Tensor], length: int) -> torch.Tensor:
+    """Generate a mask for the given list of sequences with the given length."""
+
+    # create empty mask
+    mask = torch.zeros(size = (len(seqs), length), dtype = torch.bool)
+
+    # generate masks for each sequence
+    for i in range(len(seqs)):
+        if utils.FRONT_PAD: # front pad
+            mask[i, -len(seqs[i]):] = True
+        else: # end pad
+            mask[i, :len(seqs[i])] = True
+
+    # return the mask
+    return mask
+
+##################################################
+
+
 # CUSTOM DATASET CLASS
 ##################################################
 
@@ -101,8 +142,8 @@ class CustomDataset(torch.utils.data.Dataset):
 
         # if pooling was not applied
         else:
-            seqs = utils.pad(seqs = seqs, length = max_seq_len)
-            mask = utils.mask(seqs = seqs, length = max_seq_len)
+            seqs = pad(seqs = seqs, length = max_seq_len)
+            mask = get_mask(seqs = seqs, length = max_seq_len)
 
         # return dictionary of sequences, labels, masks, and paths
         return {

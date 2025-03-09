@@ -68,10 +68,12 @@ def parse_args(args = None, namespace = None):
     args = parser.parse_args(args = args, namespace = namespace)
 
     # infer other arguments
-    args.paths_train = f"{utils.DIR_BY_TASK[args.task]}/{utils.DATA_DIR_NAME}/{utils.TRAIN_PARTITION_NAME}.txt"
-    args.paths_valid = f"{utils.DIR_BY_TASK[args.task]}/{utils.DATA_DIR_NAME}/{utils.VALID_PARTITION_NAME}.txt"
-    args.data_dir = f"{utils.DIR_BY_TASK[args.task]}/{utils.DATA_DIR_NAME}/{utils.PREBOTTLENECK_DATA_SUBDIR_NAME if args.use_prebottleneck_latents else utils.DATA_SUBDIR_NAME}"
-    args.output_dir = utils.DIR_BY_TASK[args.task]
+    output_dir = utils.DIR_BY_TASK[args.task]
+    data_dir = f"{output_dir}/{utils.DATA_DIR_NAME}"
+    args.paths_train = f"{data_dir}/{utils.TRAIN_PARTITION_NAME}.txt"
+    args.paths_valid = f"{data_dir}/{utils.VALID_PARTITION_NAME}.txt"
+    args.data_dir = f"{data_dir}/{utils.PREBOTTLENECK_DATA_SUBDIR_NAME if args.use_prebottleneck_latents else utils.DATA_SUBDIR_NAME}"
+    args.output_dir = output_dir
     args.resume = (args.run_name != None)
 
     # return parsed arguments
@@ -423,7 +425,7 @@ if __name__ == "__main__":
         wandb.finish() # finish the wandb run
 
     # output model name to list of models
-    models_output_filepath = f"{output_parent_dir}/{utils.MODELS_FILE_NAME}.txt"
+    models_output_filepath = f"{output_parent_dir}/models.txt"
     if exists(models_output_filepath):
         models = set(utils.load_txt(filepath = models_output_filepath)) # read in list of trained models and use a set because better for `in` operations
     else:

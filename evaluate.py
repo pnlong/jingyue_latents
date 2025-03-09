@@ -52,8 +52,9 @@ def parse_args(args = None, namespace = None):
     args = parser.parse_args(args = args, namespace = namespace)
     
     # infer other arguments
-    args.paths_test = f"{utils.DIR_BY_TASK[args.task]}/{utils.DATA_DIR_NAME}/{utils.TEST_PARTITION_NAME}.txt"
-    args.models_list = f"{utils.DIR_BY_TASK[args.task]}/{utils.MODELS_FILE_NAME}.txt"        
+    input_dir = utils.DIR_BY_TASK[args.task]
+    args.paths_test = f"{input_dir}/{utils.DATA_DIR_NAME}/{utils.TEST_PARTITION_NAME}.txt"
+    args.models_list = f"{input_dir}/models.txt"        
 
     # return parsed arguments
     return args

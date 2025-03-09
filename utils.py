@@ -13,17 +13,13 @@ import json
 from typing import Union, List, Tuple
 import numpy as np
 import pickle
-import torch
+from torch import uint8, float32
 
 from os.path import exists, dirname, realpath
 from os import mkdir
 import argparse
 import logging
 from shutil import rmtree
-
-from os.path import dirname, realpath
-import sys
-sys.path.insert(0, dirname(realpath(__file__)))
 
 ##################################################
 
@@ -49,7 +45,6 @@ DATA_SUBDIR_NAME = "data"
 PREBOTTLENECK_DATA_SUBDIR_NAME = "prebottleneck"
 CHECKPOINTS_DIR_NAME = "checkpoints"
 DEFAULT_MODEL_NAME = "model"
-MODELS_FILE_NAME = "models"
 SYMLINKS_DIR_NAME = "symlinks"
 
 # symlinks dir, use `ln -sf /path/to/directory /path/to/symlink` to create a new symlink
@@ -164,8 +159,8 @@ ALL_PARTITIONS = [TRAIN_PARTITION_NAME, VALID_PARTITION_NAME, TEST_PARTITION_NAM
 RELEVANT_TRAINING_PARTITIONS = ALL_PARTITIONS[:2]
 
 # data types for custom dataset
-DATA_TYPE = torch.float32
-LABEL_TYPE = torch.uint8
+DATA_TYPE = float32
+LABEL_TYPE = uint8
 
 # training statistics
 LOSS_STATISTIC_NAME = "loss"
@@ -189,47 +184,6 @@ TRANSFORMER_LAYERS = 6
 TRANSFORMER_HEADS = 8
 TRANSFORMER_DROPOUT = 0.2
 TRANSFORMER_FEEDFORWARD_LAYERS = 256
-
-##################################################
-
-
-# TRAINING HELPER FUNCTIONS
-##################################################
-
-def pad(seqs: List[torch.Tensor], length: int) -> torch.Tensor:
-    """Front-zero-pad a given list of sequences to the given length."""
-
-    # pad sequences
-    for i, seq in enumerate(seqs):
-        if len(seq) < length: # sequence is shorter than length
-            pad = length - len(seq)
-            pad = (0, 0, pad, 0) if FRONT_PAD else (0, 0, 0, pad)
-            seq = torch.nn.functional.pad(input = seq, pad = pad, mode = "constant", value = 0)
-        else: # sequence is longer than length
-            seq = seq[:length]
-        seqs[i] = seq # update value in sequences
-
-    # stack sequences
-    seqs = torch.stack(tensors = seqs, dim = 0)
-
-    # return padded sequences as single matrix
-    return seqs
-
-def mask(seqs: List[torch.Tensor], length: int) -> torch.Tensor:
-    """Generate a mask for the given list of sequences with the given length."""
-
-    # create empty mask
-    mask = torch.zeros(size = (len(seqs), length), dtype = torch.bool)
-
-    # generate masks for each sequence
-    for i in range(len(seqs)):
-        if FRONT_PAD: # front pad
-            mask[i, -len(seqs[i]):] = True
-        else: # end pad
-            mask[i, :len(seqs[i])] = True
-
-    # return the mask
-    return mask
 
 ##################################################
 
