@@ -50,6 +50,7 @@ def parse_args(args = None, namespace = None):
     parser.add_argument("-up", "--use_prebottleneck_latents", action = "store_true", help = "Whether or not to use prebottleneck latents")
     parser.add_argument("-pp", "--prepool", action = "store_true", help = "Whether or not to prepool `num_bar` dimension before feeding data to model (as opposed to after)")
     parser.add_argument("-ut", "--use_transformer", action = "store_true", help = "Whether or not to use a transformer model")
+    parser.add_argument("-ul", "--use_precise_labels", action = "store_true", help = f"Whether or not to use more precise labels (only relevant for the `{utils.CHORD_DIR_NAME}` task)")
     parser.add_argument("-bs", "--batch_size", default = utils.BATCH_SIZE, type = int, help = "Batch size for data loader")
     parser.add_argument("--epochs", default = utils.N_EPOCHS, type = int, help = "Number of epochs")
     parser.add_argument("--steps", default = None, type = int, help = "Number of steps")
@@ -70,11 +71,13 @@ def parse_args(args = None, namespace = None):
     # infer other arguments
     output_dir = utils.DIR_BY_TASK[args.task]
     data_dir = f"{output_dir}/{utils.DATA_DIR_NAME}"
-    args.paths_train = f"{data_dir}/{utils.TRAIN_PARTITION_NAME}.txt"
-    args.paths_valid = f"{data_dir}/{utils.VALID_PARTITION_NAME}.txt"
+    splits_dir = f"{data_dir}/{utils.SPLITS_SUBDIR_NAME}"
+    args.paths_train = f"{splits_dir}/{utils.TRAIN_PARTITION_NAME}.txt"
+    args.paths_valid = f"{splits_dir}/{utils.VALID_PARTITION_NAME}.txt"
     args.data_dir = f"{data_dir}/{utils.PREBOTTLENECK_DATA_SUBDIR_NAME if args.use_prebottleneck_latents else utils.DATA_SUBDIR_NAME}"
     args.output_dir = output_dir
     args.resume = (args.run_name != None)
+    args.mappings_path = f"{data_dir}/{utils.MAPPINGS_SUBDIR_NAME}/{utils.MAPPING_NAMES_BY_TASK[args.task][0 if args.task != utils.CHORD_DIR_NAME else int(args.use_precise_labels)]}.{utils.JSON_FILETYPE}"
 
     # return parsed arguments
     return args
@@ -113,9 +116,9 @@ if __name__ == "__main__":
     # create the dataset and data loader
     print(f"Creating the data loader...")
     dataset = {
-        utils.TRAIN_PARTITION_NAME: get_dataset(task = task, directory = args.data_dir, paths = args.paths_train, pool = args.prepool),
-        utils.VALID_PARTITION_NAME: get_dataset(task = task, directory = args.data_dir, paths = args.paths_valid, pool = args.prepool),
-        }
+        utils.TRAIN_PARTITION_NAME: get_dataset(task = task, directory = args.data_dir, paths = args.paths_train, mappings_path = args.mappings_path, pool = args.prepool),
+        utils.VALID_PARTITION_NAME: get_dataset(task = task, directory = args.data_dir, paths = args.paths_valid, mappings_path = args.mappings_path, pool = args.prepool),
+    }
     data_loader = {
         utils.TRAIN_PARTITION_NAME: torch.utils.data.DataLoader(dataset = dataset[utils.TRAIN_PARTITION_NAME], batch_size = args.batch_size, shuffle = True, num_workers = args.jobs, collate_fn = dataset[utils.TRAIN_PARTITION_NAME].collate),
         utils.VALID_PARTITION_NAME: torch.utils.data.DataLoader(dataset = dataset[utils.VALID_PARTITION_NAME], batch_size = args.batch_size, shuffle = False, num_workers = args.jobs, collate_fn = dataset[utils.VALID_PARTITION_NAME].collate),

@@ -31,13 +31,17 @@ class CustomMLP(nn.Module):
             input_dim: int, # number of input features
             output_dim: int, # number of output features
             prepool: bool = False, # whether inputs are prepooled
+            output_is_3d: bool = False, # whether the output of the forward pass is 3d (as opposed to 2d)
             use_large: bool = False, # whether to use larger model
             use_small: bool = False, # whether to use smaller model
         ):
         super().__init__()
 
         # save variables
+        self.input_dim = input_dim
+        self.output_dim = output_dim
         self.prepool = prepool
+        self.output_is_3d = output_is_3d
 
         # draft model architecture
         if use_large: # large model has 49,732 parameters
@@ -70,6 +74,7 @@ class CustomMLP(nn.Module):
 
         # if num_bar dimension was already reduced
         if self.prepool:
+            batch_size, embedding_dim = input.shape
             logits = self.mlp(input) # simply get logits by feeding the input through the model
 
         # if num_bar dimension wasn't reduced, and we pool ourselves
@@ -80,7 +85,11 @@ class CustomMLP(nn.Module):
             output = output.reshape(batch_size, num_bar, -1) # reshape output to size (batch_size, num_bar, n_classes)
             output = output * mask.unsqueeze(dim = -1) # apply mask (size of (batch_size, num_bar)) to output
             logits = output.sum(dim = 1) / mask.sum(dim = -1).unsqueeze(dim = -1) # average output to reduce num_bar dimension; output is now of size (batch_size, n_classes)
-            del batch_size, num_bar, embedding_dim, output # free up memory
+            del embedding_dim, output # free up memory
+
+        # reshape logits any further if necessary
+        if self.output_is_3d and len(logits.shape) == 2:
+            logits = logits.reshape(batch_size, -1, self.output_dim) # reshape to (batch_size, number of events per bar, n_classes)
 
         # return final logits
         return logits
@@ -98,10 +107,17 @@ class CustomTransformer(nn.Module):
             input_dim: int, # number of input features
             output_dim: int, # number of output features
             max_seq_len: int, # maximum sequence length
+            output_is_3d: bool = False, # whether the output of the forward pass is 3d (as opposed to 2d)
             use_large: bool = False, # whether to use larger model
             use_small: bool = False, # whether to use smaller model
         ):
         super().__init__()
+
+        # save variables
+        self.input_dim = input_dim
+        self.output_dim = output_dim
+        self.max_seq_len = max_seq_len
+        self.output_is_3d = output_is_3d
 
         # draft model architecture
         dropout = utils.TRANSFORMER_DROPOUT # dropout rate
@@ -144,6 +160,9 @@ class CustomTransformer(nn.Module):
             mask: torch.Tensor,
         ):
 
+        # helper variable
+        batch_size = len(input)
+
         # wrangle mask
         mask = torch.logical_not(input = mask) # padding values must be True
 
@@ -167,7 +186,11 @@ class CustomTransformer(nn.Module):
         output = output[:, -1, :] # choose the output from the final bar, now of size (batch_size, embedding_dim)
 
         # pass through the output layer
-        logits = self.fc_out(output)
+        logits = self.fc_out(output) # shape is now (batch_size, n_classes)
+
+        # reshape logits any further if necessary
+        if self.output_is_3d:
+            logits = logits.reshape(batch_size, -1, self.output_dim) # reshape to (batch_size, number of events per bar, n_classes)
 
         # return final logits
         return logits
@@ -185,10 +208,19 @@ def get_model(args: dict) -> nn.Module:
     task = args.get("task")
     use_transformer = args.get("use_transformer", False)
     input_dim = utils.PREBOTTLENECK_LATENT_EMBEDDING_DIM if args.get("use_prebottleneck_latents", False) else utils.LATENT_EMBEDDING_DIM
-    output_dim = utils.N_CLASSES_BY_TASK[task]
     prepool = args.get("prepool", False)
     model_name = args.get("model_name")
+    output_is_3d = (task == utils.CHORD_DIR_NAME)
 
+    # task specific arguments
+    match task:
+        case utils.EMOTION_DIR_NAME:
+            output_dim = utils.N_EMOTION_CLASSES
+        case utils.CHORD_DIR_NAME:
+            output_dim = utils.N_CHORD32_CLASSES if args.get("use_precise_labels", False) else utils.N_CHORD11_CLASSES
+        case utils.STYLE_DIR_NAME:
+            output_dim = utils.N_STYLE_CLASSES
+    
     # determine small or large
     use_large = "large" in model_name
     use_small = "small" in model_name
@@ -200,6 +232,7 @@ def get_model(args: dict) -> nn.Module:
         model = CustomTransformer(
             input_dim = input_dim, output_dim = output_dim,
             max_seq_len = utils.MAX_SEQ_LEN_BY_TASK[task],
+            output_is_3d = output_is_3d,
             use_large = use_large, use_small = use_small,
         )
 
@@ -207,7 +240,8 @@ def get_model(args: dict) -> nn.Module:
     else:
         model = CustomMLP(
             input_dim = input_dim, output_dim = output_dim,
-            prepool = prepool,
+            prepool = prepool, 
+            output_is_3d = output_is_3d,
             use_large = use_large, use_small = use_small,
         )
 

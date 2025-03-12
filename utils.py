@@ -19,7 +19,6 @@ from os.path import exists, dirname, realpath
 from os import mkdir
 import argparse
 import logging
-from shutil import rmtree
 
 ##################################################
 
@@ -28,7 +27,7 @@ from shutil import rmtree
 ##################################################
 
 # base directory
-BASE_DIR = "/deepfreeze/user_shares/pnlong/jingyue_latents"
+BASE_DIR = "/deepfreeze/pnlong/jingyue_latents"
 
 # jingyue's directory (and symlinks)
 JINGYUE_DIR = "/deepfreeze/user_shares/jingyue"
@@ -41,6 +40,8 @@ ALL_TASKS = [EMOTION_DIR_NAME, CHORD_DIR_NAME, STYLE_DIR_NAME]
 
 # subdirectory names
 DATA_DIR_NAME = "data"
+SPLITS_SUBDIR_NAME = "splits"
+MAPPINGS_SUBDIR_NAME = "mappings" # map each filename to a label
 DATA_SUBDIR_NAME = "data"
 PREBOTTLENECK_DATA_SUBDIR_NAME = "prebottleneck"
 CHECKPOINTS_DIR_NAME = "checkpoints"
@@ -52,14 +53,13 @@ SYMLINKS_DIR = f"{dirname(realpath(__file__))}/{SYMLINKS_DIR_NAME}"
 JINGYUE_DATA_SYMLINKS_DIR_BY_TASK = {task: f"{SYMLINKS_DIR}/{task}" for task in ALL_TASKS}
 JINGYUE_DATA_SYMLINK_NAME = DATA_SUBDIR_NAME
 JINGYUE_PREBOTTLENECK_DATA_SYMLINK_NAME = PREBOTTLENECK_DATA_SUBDIR_NAME
-JINGYUE_SPLITS_SYMLINK_NAME = "splits"
+JINGYUE_SPLITS_SYMLINK_NAME = SPLITS_SUBDIR_NAME
 
 # will all be populated later
 DIR_BY_TASK = {task: f"{BASE_DIR}/{task}" for task in ALL_TASKS} # task name to BASE_DIR subdirectory
-INDEXER_BY_TASK = dict()  # task name to primary indexer dictionary
-N_CLASSES_BY_TASK = dict() # task name to number of classes for that task
 MAX_SEQ_LEN_BY_TASK = dict() # task name to maximum sequence length for that task
-DEFAULT_MODEL_NAME_BY_TASK = {task: DEFAULT_MODEL_NAME for task in ALL_TASKS} # task name to default model name for that task
+MAPPING_NAMES_BY_TASK = dict()
+EVENTS_PER_BAR_BY_TASK = dict() # number of events per bar for that task
 
 ##################################################
 
@@ -223,13 +223,19 @@ EMOTION_ID_TO_INDEX = {emotion_id: i for i, emotion_id in enumerate(EMOTION_TO_E
 EMOTION_ID_TO_EMOTION = inverse_dict(d = EMOTION_TO_EMOTION_ID)
 INDEX_TO_EMOTION = inverse_dict(d = EMOTION_TO_INDEX)
 INDEX_TO_EMOTION_ID = inverse_dict(d = EMOTION_ID_TO_INDEX)
-INDEXER_BY_TASK[EMOTION_DIR_NAME] = EMOTION_ID_TO_INDEX
+EMOTION_INDEXER = EMOTION_ID_TO_INDEX
+
+# number of emotions per bar
+EVENTS_PER_BAR_BY_TASK[EMOTION_DIR_NAME] = 1
 
 # number of emotion classes
-N_CLASSES_BY_TASK[EMOTION_DIR_NAME] = len(EMOTIONS)
+N_EMOTION_CLASSES = len(EMOTIONS)
 
 # maximum song length (in bars) for emotion data
 MAX_SEQ_LEN_BY_TASK[EMOTION_DIR_NAME] = 42
+
+# mapping name(s) for emotion
+MAPPING_NAMES_BY_TASK[EMOTION_DIR_NAME] = [EMOTION_DIR_NAME]
 
 # emotion evaluation output columns
 EVALUATION_LOSS_OUTPUT_COLUMNS_BY_TASK[EMOTION_DIR_NAME] = EVALUATION_LOSS_OUTPUT_COLUMNS
@@ -242,16 +248,115 @@ EVALUATION_ACCURACY_OUTPUT_COLUMNS_BY_TASK[EMOTION_DIR_NAME] = EVALUATION_ACCURA
 ##################################################
 
 # mappings
-CHORDS = []
-CHORD_TO_INDEX = {chord: i for i, chord in enumerate(CHORDS)}
-INDEX_TO_CHORD = inverse_dict(d = CHORD_TO_INDEX)
-INDEXER_BY_TASK[CHORD_DIR_NAME] = CHORD_TO_INDEX
+CHORDS11 = [
+    "A:7", "A:aug", "A:dim", "A:dim7", "A:hdim7", "A:maj", "A:maj7", "A:min", "A:min7", "A:sus2", "A:sus4",
+    "Ab:7", "Ab:aug", "Ab:dim", "Ab:dim7", "Ab:hdim7", "Ab:maj", "Ab:maj7", "Ab:min", "Ab:min7", "Ab:sus2", "Ab:sus4",
+    "B:7", "B:aug", "B:dim", "B:dim7", "B:hdim7", "B:maj", "B:maj7", "B:min", "B:min7", "B:sus2", "B:sus4",
+    "Bb:7", "Bb:aug", "Bb:dim", "Bb:dim7", "Bb:hdim7", "Bb:maj", "Bb:maj7", "Bb:min", "Bb:min7", "Bb:sus2", "Bb:sus4",
+    "C#:7", "C#:aug", "C#:dim", "C#:dim7", "C#:hdim7", "C#:maj", "C#:maj7", "C#:min", "C#:min7", "C#:sus2", "C#:sus4",
+    "C:7", "C:aug", "C:dim", "C:dim7", "C:hdim7", "C:maj", "C:maj7", "C:min", "C:min7", "C:sus2", "C:sus4",
+    "D:7", "D:aug", "D:dim", "D:dim7", "D:hdim7", "D:maj", "D:maj7", "D:min", "D:min7", "D:sus2", "D:sus4",
+    "E:7", "E:aug", "E:dim", "E:dim7", "E:hdim7", "E:maj", "E:maj7", "E:min", "E:min7", "E:sus2", "E:sus4",
+    "Eb:7", "Eb:aug", "Eb:dim", "Eb:dim7", "Eb:hdim7", "Eb:maj", "Eb:maj7", "Eb:min", "Eb:min7", "Eb:sus2", "Eb:sus4",
+    "F#:7", "F#:aug", "F#:dim", "F#:dim7", "F#:hdim7", "F#:maj", "F#:maj7", "F#:min", "F#:min7", "F#:sus2", "F#:sus4",
+    "F:7", "F:aug", "F:dim", "F:dim7", "F:hdim7", "F:maj", "F:maj7", "F:min", "F:min7", "F:sus2", "F:sus4",
+    "G:7", "G:aug", "G:dim", "G:dim7", "G:hdim7", "G:maj", "G:maj7", "G:min", "G:min7", "G:sus2", "G:sus4",
+    "N"]
+CHORDS32 = [
+    "A:11", "A:13", "A:7", "A:7(#9)", "A:9", "A:aug", "A:dim", "A:dim7", "A:hdim7", "A:maj", "A:maj(11)", "A:maj(9)", 
+    "A:maj13", "A:maj6", "A:maj6(9)", "A:maj7", "A:maj9", "A:maj9(11)", "A:min", "A:min(11)", "A:min(9)", "A:min11", 
+    "A:min13", "A:min6", "A:min6(9)", "A:min7", "A:min9", "A:minmaj7", "A:sus2", "A:sus4", "A:sus4(b7)", "A:sus4(b7,9)",
+    "Ab:11", "Ab:13", "Ab:7", "Ab:7(#9)", "Ab:9", "Ab:aug", "Ab:dim", "Ab:dim7", "Ab:hdim7", "Ab:maj", "Ab:maj(11)", "Ab:maj(9)", 
+    "Ab:maj13", "Ab:maj6", "Ab:maj6(9)", "Ab:maj7", "Ab:maj9", "Ab:maj9(11)", "Ab:min", "Ab:min(11)", "Ab:min(9)", "Ab:min11", 
+    "Ab:min6", "Ab:min6(9)", "Ab:min7", "Ab:min9", "Ab:minmaj7", "Ab:sus2", "Ab:sus4", "Ab:sus4(b7)", "Ab:sus4(b7,9)", 
+    "B:11", "B:13", "B:7", "B:7(#9)", "B:9", "B:aug", "B:dim", "B:dim7", "B:hdim7", "B:maj", "B:maj(11)", "B:maj(9)", 
+    "B:maj13", "B:maj6", "B:maj6(9)", "B:maj7", "B:maj9", "B:min", "B:min(11)", "B:min(9)", "B:min11", 
+    "B:min13", "B:min6", "B:min6(9)", "B:min7", "B:min9", "B:minmaj7", "B:sus2", "B:sus4", "B:sus4(b7)", "B:sus4(b7,9)", 
+    "Bb:11", "Bb:13", "Bb:7", "Bb:7(#9)", "Bb:9", "Bb:aug", "Bb:dim", "Bb:dim7", "Bb:hdim7", "Bb:maj", "Bb:maj(11)", "Bb:maj(9)", 
+    "Bb:maj13", "Bb:maj6", "Bb:maj6(9)", "Bb:maj7", "Bb:maj9", "Bb:maj9(11)", "Bb:min", "Bb:min(11)", "Bb:min(9)", "Bb:min11", 
+    "Bb:min13", "Bb:min6", "Bb:min6(9)", "Bb:min7", "Bb:min9", "Bb:minmaj7", "Bb:sus2", "Bb:sus4", "Bb:sus4(b7)", "Bb:sus4(b7,9)",
+    "C#:11", "C#:13", "C#:7", "C#:7(#9)", "C#:9", "C#:aug", "C#:dim", "C#:dim7", "C#:hdim7", "C#:maj", "C#:maj(11)", "C#:maj(9)", 
+    "C#:maj6", "C#:maj6(9)", "C#:maj7", "C#:maj9", "C#:maj9(11)", "C#:min", "C#:min(11)", "C#:min(9)", "C#:min11", 
+    "C#:min13", "C#:min6", "C#:min6(9)", "C#:min7", "C#:min9", "C#:minmaj7", "C#:sus2", "C#:sus4", "C#:sus4(b7)", "C#:sus4(b7,9)",
+    "C:11", "C:13", "C:7", "C:7(#9)", "C:9", "C:aug", "C:dim", "C:dim7", "C:hdim7", "C:maj", "C:maj(11)", "C:maj(9)", 
+    "C:maj13", "C:maj6", "C:maj6(9)", "C:maj7", "C:maj9", "C:maj9(11)", "C:min", "C:min(11)", "C:min(9)", "C:min11", 
+    "C:min6", "C:min6(9)", "C:min7", "C:min9", "C:minmaj7", "C:sus2", "C:sus4", "C:sus4(b7)", "C:sus4(b7,9)", 
+    "D:11", "D:13", "D:7", "D:7(#9)", "D:9", "D:aug", "D:dim", "D:dim7", "D:hdim7", "D:maj", "D:maj(11)", "D:maj(9)", 
+    "D:maj13", "D:maj6", "D:maj6(9)", "D:maj7", "D:maj9", "D:maj9(11)", "D:min", "D:min(11)", "D:min(9)", "D:min11", 
+    "D:min13", "D:min6", "D:min7", "D:min9", "D:minmaj7", "D:sus2", "D:sus4", "D:sus4(b7)", "D:sus4(b7,9)", 
+    "E:11", "E:13", "E:7", "E:7(#9)", "E:9", "E:aug", "E:dim", "E:dim7", "E:hdim7", "E:maj", "E:maj(11)", "E:maj(9)", 
+    "E:maj13", "E:maj6", "E:maj6(9)", "E:maj7", "E:maj9", "E:min", "E:min(11)", "E:min(9)", "E:min11", 
+    "E:min6", "E:min6(9)", "E:min7", "E:min9", "E:minmaj7", "E:sus2", "E:sus4", "E:sus4(b7)", "E:sus4(b7,9)", 
+    "Eb:11", "Eb:13", "Eb:7", "Eb:7(#9)", "Eb:9", "Eb:aug", "Eb:dim", "Eb:dim7", "Eb:hdim7", "Eb:maj", "Eb:maj(11)", "Eb:maj(9)", 
+    "Eb:maj6", "Eb:maj6(9)", "Eb:maj7", "Eb:maj9", "Eb:maj9(11)", "Eb:min", "Eb:min(11)", "Eb:min(9)", "Eb:min11", 
+    "Eb:min6", "Eb:min6(9)", "Eb:min7", "Eb:min9", "Eb:minmaj7", "Eb:sus2", "Eb:sus4", "Eb:sus4(b7)", "Eb:sus4(b7,9)", 
+    "F#:11", "F#:13", "F#:7", "F#:7(#9)", "F#:9", "F#:aug", "F#:dim", "F#:dim7", "F#:hdim7", "F#:maj", "F#:maj(11)", "F#:maj(9)", 
+    "F#:maj6", "F#:maj6(9)", "F#:maj7", "F#:maj9", "F#:maj9(11)", "F#:min", "F#:min(11)", "F#:min(9)", "F#:min11", 
+    "F#:min13", "F#:min6", "F#:min6(9)", "F#:min7", "F#:min9", "F#:minmaj7", "F#:sus2", "F#:sus4", "F#:sus4(b7)", "F#:sus4(b7,9)", 
+    "F:11", "F:13", "F:7", "F:7(#9)", "F:9", "F:aug", "F:dim", "F:dim7", "F:hdim7", "F:maj", "F:maj(11)", "F:maj(9)", 
+    "F:maj13", "F:maj6", "F:maj6(9)", "F:maj7", "F:maj9", "F:maj9(11)", "F:min", "F:min(11)", "F:min(9)", "F:min11", 
+    "F:min13", "F:min6", "F:min6(9)", "F:min7", "F:min9", "F:minmaj7", "F:sus2", "F:sus4", "F:sus4(b7)", "F:sus4(b7,9)", 
+    "G:11", "G:13", "G:7", "G:9", "G:aug", "G:dim", "G:dim7", "G:hdim7", "G:maj", "G:maj(11)", "G:maj(9)", "G:maj6", "G:maj6(9)", "G:maj7", "G:maj9", 
+    "G:min", "G:min(11)", "G:min(9)", "G:min11", 
+    "G:min13", "G:min6", "G:min6(9)", "G:min7", "G:min9", "G:minmaj7", "G:sus2", "G:sus4", "G:sus4(b7)", "G:sus4(b7,9)", 
+    "N"]
+# CHORDS32 = [
+#     "A:11", "A:13", "A:7", "A:7(#9)", "A:9", "A:aug", "A:dim", "A:dim7", "A:hdim7", "A:maj", "A:maj(11)", "A:maj(9)", 
+#     "A:maj13", "A:maj6", "A:maj6(9)", "A:maj7", "A:maj9", "A:maj9(11)", "A:min", "A:min(11)", "A:min(9)", "A:min11", 
+#     "A:min13", "A:min6", "A:min6(9)", "A:min7", "A:min9", "A:minmaj7", "A:sus2", "A:sus4", "A:sus4(b7)", "A:sus4(b7,9)",
+#     "Ab:11", "Ab:13", "Ab:7", "Ab:7(#9)", "Ab:9", "Ab:aug", "Ab:dim", "Ab:dim7", "Ab:hdim7", "Ab:maj", "Ab:maj(11)", "Ab:maj(9)", 
+#     "Ab:maj13", "Ab:maj6", "Ab:maj6(9)", "Ab:maj7", "Ab:maj9", "Ab:maj9(11)", "Ab:min", "Ab:min(11)", "Ab:min(9)", "Ab:min11", 
+#     "Ab:min13", "Ab:min6", "Ab:min6(9)", "Ab:min7", "Ab:min9", "Ab:minmaj7", "Ab:sus2", "Ab:sus4", "Ab:sus4(b7)", "Ab:sus4(b7,9)",
+#     "B:11", "B:13", "B:7", "B:7(#9)", "B:9", "B:aug", "B:dim", "B:dim7", "B:hdim7", "B:maj", "B:maj(11)", "B:maj(9)",
+#     "B:maj13", "B:maj6", "B:maj6(9)", "B:maj7", "B:maj9", "B:maj9(11)", "B:min", "B:min(11)", "B:min(9)", "B:min11",
+#     "B:min13", "B:min6", "B:min6(9)", "B:min7", "B:min9", "B:minmaj7", "B:sus2", "B:sus4", "B:sus4(b7)", "B:sus4(b7,9)",
+#     "Bb:11", "Bb:13", "Bb:7", "Bb:7(#9)", "Bb:9", "Bb:aug", "Bb:dim", "Bb:dim7", "Bb:hdim7", "Bb:maj", "Bb:maj(11)", "Bb:maj(9)", 
+#     "Bb:maj13", "Bb:maj6", "Bb:maj6(9)", "Bb:maj7", "Bb:maj9", "Bb:maj9(11)", "Bb:min", "Bb:min(11)", "Bb:min(9)", "Bb:min11", 
+#     "Bb:min13", "Bb:min6", "Bb:min6(9)", "Bb:min7", "Bb:min9", "Bb:minmaj7", "Bb:sus2", "Bb:sus4", "Bb:sus4(b7)", "Bb:sus4(b7,9)",
+#     "C#:11", "C#:13", "C#:7", "C#:7(#9)", "C#:9", "C#:aug", "C#:dim", "C#:dim7", "C#:hdim7", "C#:maj", "C#:maj(11)", "C#:maj(9)", 
+#     "C#:maj13", "C#:maj6", "C#:maj6(9)", "C#:maj7", "C#:maj9", "C#:maj9(11)", "C#:min", "C#:min(11)", "C#:min(9)", "C#:min11", 
+#     "C#:min13", "C#:min6", "C#:min6(9)", "C#:min7", "C#:min9", "C#:minmaj7", "C#:sus2", "C#:sus4", "C#:sus4(b7)", "C#:sus4(b7,9)",
+#     "C:11", "C:13", "C:7", "C:7(#9)", "C:9", "C:aug", "C:dim", "C:dim7", "C:hdim7", "C:maj", "C:maj(11)", "C:maj(9)", 
+#     "C:maj13", "C:maj6", "C:maj6(9)", "C:maj7", "C:maj9", "C:maj9(11)", "C:min", "C:min(11)", "C:min(9)", "C:min11", 
+#     "C:min13", "C:min6", "C:min6(9)", "C:min7", "C:min9", "C:minmaj7", "C:sus2", "C:sus4", "C:sus4(b7)", "C:sus4(b7,9)",
+#     "D:11", "D:13", "D:7", "D:7(#9)", "D:9", "D:aug", "D:dim", "D:dim7", "D:hdim7", "D:maj", "D:maj(11)", "D:maj(9)", 
+#     "D:maj13", "D:maj6", "D:maj6(9)", "D:maj7", "D:maj9", "D:maj9(11)", "D:min", "D:min(11)", "D:min(9)", "D:min11", 
+#     "D:min13", "D:min6", "D:min6(9)", "D:min7", "D:min9", "D:minmaj7", "D:sus2", "D:sus4", "D:sus4(b7)", "D:sus4(b7,9)",
+#     "E:11", "E:13", "E:7", "E:7(#9)", "E:9", "E:aug", "E:dim", "E:dim7", "E:hdim7", "E:maj", "E:maj(11)", "E:maj(9)", 
+#     "E:maj13", "E:maj6", "E:maj6(9)", "E:maj7", "E:maj9", "E:maj9(11)", "E:min", "E:min(11)", "E:min(9)", "E:min11", 
+#     "E:min13", "E:min6", "E:min6(9)", "E:min7", "E:min9", "E:minmaj7", "E:sus2", "E:sus4", "E:sus4(b7)", "E:sus4(b7,9)",
+#     "Eb:11", "Eb:13", "Eb:7", "Eb:7(#9)", "Eb:9", "Eb:aug", "Eb:dim", "Eb:dim7", "Eb:hdim7", "Eb:maj", "Eb:maj(11)", "Eb:maj(9)", 
+#     "Eb:maj13", "Eb:maj6", "Eb:maj6(9)", "Eb:maj7", "Eb:maj9", "Eb:maj9(11)", "Eb:min", "Eb:min(11)", "Eb:min(9)", "Eb:min11", 
+#     "Eb:min13", "Eb:min6", "Eb:min6(9)", "Eb:min7", "Eb:min9", "Eb:minmaj7", "Eb:sus2", "Eb:sus4", "Eb:sus4(b7)", "Eb:sus4(b7,9)",
+#     "F#:11", "F#:13", "F#:7", "F#:7(#9)", "F#:9", "F#:aug", "F#:dim", "F#:dim7", "F#:hdim7", "F#:maj", "F#:maj(11)", "F#:maj(9)", 
+#     "F#:maj13", "F#:maj6", "F#:maj6(9)", "F#:maj7", "F#:maj9", "F#:maj9(11)", "F#:min", "F#:min(11)", "F#:min(9)", "F#:min11", 
+#     "F#:min13", "F#:min6", "F#:min6(9)", "F#:min7", "F#:min9", "F#:minmaj7", "F#:sus2", "F#:sus4", "F#:sus4(b7)", "F#:sus4(b7,9)",
+#     "F:11", "F:13", "F:7", "F:7(#9)", "F:9", "F:aug", "F:dim", "F:dim7", "F:hdim7", "F:maj", "F:maj(11)", "F:maj(9)", 
+#     "F:maj13", "F:maj6", "F:maj6(9)", "F:maj7", "F:maj9", "F:maj9(11)", "F:min", "F:min(11)", "F:min(9)", "F:min11", 
+#     "F:min13", "F:min6", "F:min6(9)", "F:min7", "F:min9", "F:minmaj7", "F:sus2", "F:sus4", "F:sus4(b7)", "F:sus4(b7,9)",
+#     "G:11", "G:13", "G:7", "G:7(#9)", "G:9", "G:aug", "G:dim", "G:dim7", "G:hdim7", "G:maj", "G:maj(11)", "G:maj(9)", 
+#     "G:maj13", "G:maj6", "G:maj6(9)", "G:maj7", "G:maj9", "G:maj9(11)", "G:min", "G:min(11)", "G:min(9)", "G:min11", 
+#     "G:min13", "G:min6", "G:min6(9)", "G:min7", "G:min9", "G:minmaj7", "G:sus2", "G:sus4", "G:sus4(b7)", "G:sus4(b7,9)",
+#     "N"]
+CHORD11_TO_INDEX = {chord: i for i, chord in enumerate(CHORDS11)}
+INDEX_TO_CHORD11 = inverse_dict(d = CHORD11_TO_INDEX)
+CHORD32_TO_INDEX = {chord: i for i, chord in enumerate(CHORDS32)}
+INDEX_TO_CHORD32 = inverse_dict(d = CHORD32_TO_INDEX)
+CHORD_INDEXER = [CHORD11_TO_INDEX, CHORD32_TO_INDEX] # make sure the order lines up with the order of JINGYUE_CHORD_MAPPING_DIR_NAMES
+
+# number of chords per bar
+EVENTS_PER_BAR_BY_TASK[CHORD_DIR_NAME] = 4
 
 # number of chord classes
-N_CLASSES_BY_TASK[CHORD_DIR_NAME] = len(CHORDS)
+N_CHORD11_CLASSES = len(CHORDS11)
+N_CHORD32_CLASSES = len(CHORDS32)
 
 # maximum song length (in bars) for chord data
 MAX_SEQ_LEN_BY_TASK[CHORD_DIR_NAME] = 1 # must be 1, since this is a bar-by-bar classification task
+
+# mapping name(s) for chord
+JINGYUE_CHORD_MAPPING_DIR_NAMES = ["chord_pkl_11", "chord_pkl_32"]
+MAPPING_NAMES_BY_TASK[CHORD_DIR_NAME] = [CHORD_DIR_NAME + "_" + mapping_dir_name.split("_")[-1] for mapping_dir_name in JINGYUE_CHORD_MAPPING_DIR_NAMES]
 
 # chord evaluation output columns
 EVALUATION_LOSS_OUTPUT_COLUMNS_BY_TASK[CHORD_DIR_NAME] = EVALUATION_LOSS_OUTPUT_COLUMNS
@@ -267,13 +372,19 @@ EVALUATION_ACCURACY_OUTPUT_COLUMNS_BY_TASK[CHORD_DIR_NAME] = EVALUATION_ACCURACY
 STYLES = ["Bethel", "Clayderman", "Einaudi", "Hancock", "Hillsong", "Hisaishi", "Ryuichi", "Yiruma"]
 STYLE_TO_INDEX = {style: i for i, style in enumerate(STYLES)}
 INDEX_TO_STYLE = inverse_dict(d = STYLE_TO_INDEX)
-INDEXER_BY_TASK[STYLE_DIR_NAME] = STYLE_TO_INDEX
+STYLE_INDEXER = STYLE_TO_INDEX
+
+# number of styles per bar
+EVENTS_PER_BAR_BY_TASK[STYLE_DIR_NAME] = 1
 
 # number of style classes
-N_CLASSES_BY_TASK[STYLE_DIR_NAME] = len(STYLES)
+N_STYLE_CLASSES = len(STYLES)
 
 # maximum song length (in bars) for style data
 MAX_SEQ_LEN_BY_TASK[STYLE_DIR_NAME] = 42
+
+# mapping name(s) for style
+MAPPING_NAMES_BY_TASK[STYLE_DIR_NAME] = [STYLE_DIR_NAME]
 
 # style evaluation output columns
 EVALUATION_LOSS_OUTPUT_COLUMNS_BY_TASK[STYLE_DIR_NAME] = EVALUATION_LOSS_OUTPUT_COLUMNS
@@ -304,6 +415,7 @@ DOTTED_SEPARATOR_LINE = "".join(("- " for _ in range(SEPARATOR_LINE_WIDTH // 2))
 # filetypes
 TENSOR_FILETYPE = "pt"
 PICKLE_FILETYPE = "pkl"
+JSON_FILETYPE = "json"
 
 ##################################################
 
@@ -362,8 +474,6 @@ if __name__ == "__main__":
 
         # create base_dir
         base_dir = f"{BASE_DIR}/{task}"
-        if exists(base_dir) and args.reset:
-            rmtree(base_dir, ignore_errors = True)
         if not exists(base_dir):
             mkdir(base_dir)
         

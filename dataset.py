@@ -10,8 +10,8 @@
 ##################################################
 
 from typing import List
-from os.path import exists, dirname, realpath
-from os import mkdir
+from os.path import exists, dirname, realpath, basename
+from os import mkdir, readlink
 from shutil import rmtree
 import argparse
 import logging
@@ -84,14 +84,14 @@ class CustomDataset(torch.utils.data.Dataset):
         self,
         directory: str, # directory containing relevant paths
         paths: str, # path to file with relevant path basenames
-        indexer: dict, # dictionary that maps labels to indicies
+        mappings_path: str, # path to JSON that maps basenames to labels
         max_seq_len: int = 1, # maximum sequence length (in bars)
         pool: bool = False, # whether to pool (average) the num_bar dimension
     ):
         super().__init__()
         self.directory = directory
         self.paths = utils.load_txt(filepath = paths)
-        self.indexer = indexer
+        self.mappings = utils.load_json(filepath = mappings_path) # load in mappings
         self.max_seq_len = max_seq_len
         self.pool = pool
 
@@ -107,8 +107,7 @@ class CustomDataset(torch.utils.data.Dataset):
         path = f"{self.directory}/{base}"
 
         # get label from path
-        label = base.split("_")[0] # extract label from base (e.g. Q3_77z6Ep3aOmg_1.pkl)
-        label = self.indexer[label] # convert label to index
+        label = torch.tensor(self.mappings[base]) # extract label from base, and store as tensor
 
         # load in sequence as tensor
         seq = torch.load(f = path, weights_only = True).to(utils.DATA_TYPE)
@@ -148,7 +147,7 @@ class CustomDataset(torch.utils.data.Dataset):
         # return dictionary of sequences, labels, masks, and paths
         return {
             "seq": seqs.to(utils.DATA_TYPE),
-            "label": torch.tensor(labels, dtype = utils.LABEL_TYPE),
+            "label": torch.stack(tensors = labels, dim = 0).to(utils.LABEL_TYPE),
             "mask": mask.to(torch.bool),
             "path": paths,
         }
@@ -163,6 +162,7 @@ def get_dataset(
         task: str, # relevant task
         directory: str, # directory containing relevant paths
         paths: str, # path to file with relevant path basenames
+        mappings_path: str, # path to JSON file that maps basenames to label(s)
         pool: bool = False, # whether to pool (average) the num_bar dimension
     ) -> torch.utils.data.Dataset:
     """
@@ -170,15 +170,14 @@ def get_dataset(
     given some arguments.
     """
 
-    # match the task to the correct dataset arguments
-    indexer = utils.INDEXER_BY_TASK[task]
+    # get the correct label extractor
     max_seq_len = utils.MAX_SEQ_LEN_BY_TASK[task]
-    pool = pool if task != utils.CHORD_DIR_NAME else False # ensuring pooling is off for chord task
+    # pool = pool if task != utils.CHORD_DIR_NAME else False # ensuring pooling is off for chord task
     
     # return dataset with relevant arguments
     return CustomDataset(
         directory = directory, paths = paths,
-        indexer = indexer, max_seq_len = max_seq_len,
+        mappings_path = mappings_path, max_seq_len = max_seq_len,
         pool = pool,
     )
 
@@ -202,9 +201,11 @@ def parse_args(args = None, namespace = None):
 
     # infer other arguments
     jingyue_data_symlinks_dir = utils.JINGYUE_DATA_SYMLINKS_DIR_BY_TASK[args.task]
-    args.data_dir = f"{jingyue_data_symlinks_dir}/{utils.JINGYUE_DATA_SYMLINK_NAME}"
+    args.data_dir = readlink(f"{jingyue_data_symlinks_dir}/{utils.JINGYUE_DATA_SYMLINK_NAME}")
     args.prebottleneck_data_dir = f"{jingyue_data_symlinks_dir}/{utils.JINGYUE_PREBOTTLENECK_DATA_SYMLINK_NAME}"
-    args.partitions_dir = f"{jingyue_data_symlinks_dir}/{utils.JINGYUE_SPLITS_SYMLINK_NAME}"
+    if exists(args.prebottleneck_data_dir): # if the symlink exists, read it
+        args.prebottleneck_data_dir = readlink(args.prebottleneck_data_dir)
+    args.partitions_dir = readlink(f"{jingyue_data_symlinks_dir}/{utils.JINGYUE_SPLITS_SYMLINK_NAME}")
     args.output_dir = utils.DIR_BY_TASK[args.task]
 
     # return parsed arguments
@@ -234,19 +235,26 @@ if __name__ == "__main__":
     random.seed(0)
 
     # create output dir
+    if not exists(args.output_dir):
+        mkdir(args.output_dir)
     def directory_creator(directory: str):
         """Helper function for creating relevant directories."""
         if not exists(directory) or args.reset:
             if exists(directory):
                 rmtree(directory, ignore_errors = True)
             mkdir(directory)
-    directory_creator(directory = args.output_dir) # create output directory
-    splits_dir = f"{args.output_dir}/{utils.DATA_DIR_NAME}"
+    base_data_dir = f"{args.output_dir}/{utils.DATA_DIR_NAME}"
+    directory_creator(directory = base_data_dir)
+    splits_dir = f"{base_data_dir}/{utils.SPLITS_SUBDIR_NAME}"
     directory_creator(directory = splits_dir)
-    data_dir = f"{splits_dir}/{utils.DATA_SUBDIR_NAME}"
+    mappings_dir = f"{base_data_dir}/{utils.MAPPINGS_SUBDIR_NAME}"
+    directory_creator(directory = mappings_dir)
+    data_dir = f"{base_data_dir}/{utils.DATA_SUBDIR_NAME}"
     directory_creator(directory = data_dir)
-    prebottleneck_data_dir = f"{splits_dir}/{utils.PREBOTTLENECK_DATA_SUBDIR_NAME}"
-    directory_creator(directory = prebottleneck_data_dir)
+    prebottleneck_data_dir = f"{base_data_dir}/{utils.PREBOTTLENECK_DATA_SUBDIR_NAME}"
+    generate_prebottleneck_data_dir = exists(args.prebottleneck_data_dir)
+    if generate_prebottleneck_data_dir: 
+        directory_creator(directory = prebottleneck_data_dir)
 
     ##################################################
 
@@ -255,7 +263,8 @@ if __name__ == "__main__":
     ##################################################
 
     # read in paths
-    load_pickle = lambda filepath: list(map(lambda path: ".".join(path.split(".")[:-1]), utils.load_pickle(filepath = filepath))) # load pickle, removing filetype while at it
+    get_stem = lambda filepath: ".".join(basename(filepath).split(".")[:-1])
+    load_pickle = lambda filepath: list(map(get_stem, utils.load_pickle(filepath = filepath))) # load pickle, removing filetype while at it
     stems_by_partition = [
         load_pickle(filepath = f"{args.partitions_dir}/train.pkl"), # read in training file
         load_pickle(filepath = f"{args.partitions_dir}/valid.pkl"), # read in validation file
@@ -263,7 +272,6 @@ if __name__ == "__main__":
     ]
     all_stems = sum(stems_by_partition, []) # list of all path stems
     random.shuffle(all_stems)
-    convert_stems_to_absolute_paths = lambda directory: list(map(lambda stem: f"{directory}/{stem}." + (utils.TENSOR_FILETYPE if directory in (data_dir, prebottleneck_data_dir) else utils.PICKLE_FILETYPE), all_stems)) # helper function
     n_stems = len(all_stems) # number of stems
     del load_pickle # free up memory
 
@@ -277,9 +285,10 @@ if __name__ == "__main__":
     # OUTPUT LONGEST SEQUENCE LENGTH
     ##################################################
 
-    # helper function to get the length (in number of bars) of the song at the given path
-    def get_song_length(path: str) -> int:
-        """Return the length (in number of bars) of the song at the given path."""
+    # helper function to get the length (in number of bars) of the song at the given stem
+    def get_song_length(stem: str) -> int:
+        """Return the length (in number of bars) of the song at the given stem."""
+        path = f"{args.data_dir}/{stem}.{utils.PICKLE_FILETYPE}" # calculate absolute filepath
         seq = utils.load_pickle(filepath = path) # load in pickle file
         return len(seq) # seq.shape[0], the number of bars in the sequence
 
@@ -288,7 +297,7 @@ if __name__ == "__main__":
         song_lengths = list(pool.map(
             func = get_song_length,
             iterable = tqdm(
-                iterable = convert_stems_to_absolute_paths(directory = args.data_dir),
+                iterable = all_stems,
                 desc = "Retrieving song lengths (in bars)",
                 total = n_stems),
             chunksize = utils.CHUNK_SIZE,
@@ -299,7 +308,97 @@ if __name__ == "__main__":
     logging.info(f"{n_stems} songs (" + ", ".join([f"{partition.lower().title()}: {partition_range[-1] - partition_range[0]}" for partition, partition_range in partition_ranges_in_all_stems.items()]) + ").") # number of songs per partition
 
     # free up memory
-    del get_song_length
+    del get_song_length, song_lengths
+
+    ##################################################
+
+
+    # TASK-SPECIFIC FUNCTIONALITIES
+    ##################################################
+
+    # stem to output stem converter
+    match args.task:
+
+        # EMOTION
+        ##################################################
+
+        case utils.EMOTION_DIR_NAME:
+            def save_stem(stem: str, input_dir: str, output_dir: str) -> List[dict]: # helper function to save a torch object given the input path to the output path
+                """Save the stem as a tensor."""
+
+                # save tensor
+                path_output = f"{output_dir}/{stem}.{utils.TENSOR_FILETYPE}"
+                if not exists(path_output) or args.reset:
+                    seq = utils.load_pickle(filepath = f"{input_dir}/{stem}.{utils.PICKLE_FILETYPE}") # load in pickle file
+                    seq = torch.from_numpy(seq).to(utils.DATA_TYPE) # convert from numpy array to torch tensor of desired type
+                    torch.save(obj = seq, f = path_output) # save sequence as torch pickle object
+                
+                # return list of dictionary(s) mapping bases to labels
+                base = basename(path_output)
+                label = utils.EMOTION_ID_TO_INDEX[base.split("_")[0]]
+                mapping = [{base: label}]
+                return mapping
+        
+        ##################################################
+
+        # CHORD
+        ##################################################
+
+        case utils.CHORD_DIR_NAME:
+            def save_stem(stem: str, input_dir: str, output_dir: str) -> List[dict]: # helper function to save a torch object given the input path to the output path
+                """Save the stem as a tensor."""
+
+                # get paths, setup
+                seq = utils.load_pickle(filepath = f"{input_dir}/{stem}.{utils.PICKLE_FILETYPE}") # load in pickle file
+                seq = torch.from_numpy(seq).to(utils.DATA_TYPE) # convert from numpy array to torch tensor of desired type
+
+                # save tensors
+                get_base_from_index = lambda i: f"{stem}_{i}.{utils.TENSOR_FILETYPE}"
+                for i in range(len(seq)):
+                    path_output = f"{output_dir}/{get_base_from_index(i = i)}"
+                    if not exists(path_output) or args.reset:
+                        torch.save(obj = seq[i], f = path_output) # save sequence as torch pickle object
+                del seq # free up memory
+
+                # iterate through different chord mappings
+                mapping = []
+                for mapping_dir_name, indexer in zip(utils.JINGYUE_CHORD_MAPPING_DIR_NAMES, utils.CHORD_INDEXER):
+                    chords = utils.load_pickle(filepath = f"{dirname(input_dir)}/{mapping_dir_name}/{stem}.{utils.PICKLE_FILETYPE}") # load in chords
+                    chords = list(map(lambda chord: indexer[chord], chords)) # convert chords to indicies
+                    chords = [chords[i:(i + utils.CHORDS_PER_BAR)] for i in range(0, len(chords), utils.CHORDS_PER_BAR)] # reshape chords so there are four chords per bar
+                    mapping.append({get_base_from_index(i = i): chords[i] for i in range(len(chords))}) # add mappings to list of mappings                
+
+                # return list of dictionary(s) mapping bases to labels
+                return mapping
+
+        ##################################################
+
+        
+        # STYLE
+        ##################################################
+
+        case utils.STYLE_DIR_NAME:
+            def save_stem(stem: str, input_dir: str, output_dir: str) -> List[dict]: # helper function to save a torch object given the input path to the output path
+                """Save the stem as a tensor."""
+
+                # save tensor
+                path_output = f"{output_dir}/{stem}.{utils.TENSOR_FILETYPE}"
+                if not exists(path_output) or args.reset:
+                    seq = utils.load_pickle(filepath = f"{input_dir}/{stem}.{utils.PICKLE_FILETYPE}") # load in pickle file
+                    seq = torch.from_numpy(seq).to(utils.DATA_TYPE) # convert from numpy array to torch tensor of desired type
+                    torch.save(obj = seq, f = path_output) # save sequence as torch pickle object
+                
+                # return list of dictionary(s) mapping bases to labels
+                base = basename(path_output)
+                label = utils.STYLE_TO_INDEX[base.split("_")[0]]
+                mapping = [{base: label}]
+                return mapping
+            
+        ##################################################
+            
+        # invalid task
+        case _:
+            raise RuntimeError(f"Invalid --task `{args.task}`.")
 
     ##################################################
 
@@ -310,36 +409,39 @@ if __name__ == "__main__":
     # separator line
     logging.info(utils.MAJOR_SEPARATOR_LINE)
 
-    # helper function to save a torch object given the input path to the output path
-    def save_path(path: str, path_output: str):
-        """Save the input path to the """
-        if not exists(path_output) or args.reset:
-            seq = utils.load_pickle(filepath = path) # load in pickle file
-            seq = torch.from_numpy(seq).to(utils.DATA_TYPE) # convert from numpy array to torch tensor of desired type
-            torch.save(obj = seq, f = path_output) # save sequence as torch pickle object
-
     # use multiprocessing
-    def save_paths(input_dir: str, output_dir: str, desc: str):
+    def save_paths(input_dir: str, output_dir: str, desc: str) -> List[List[dict]]:
         """Helper function to use multiprocessing to save paths as torch tensors."""
         with multiprocessing.Pool(processes = args.jobs) as pool:
-            _ = pool.starmap(
-                func = save_path,
+            results = utils.transpose(l = list(pool.starmap(
+                func = save_stem,
                 iterable = tqdm(
                     iterable = zip(
-                        convert_stems_to_absolute_paths(directory = input_dir),
-                        convert_stems_to_absolute_paths(directory = output_dir),
+                        all_stems,
+                        utils.rep(x = input_dir, times = n_stems),
+                        utils.rep(x = output_dir, times = n_stems),
                     ),
                     desc = desc,
                     total = n_stems),
                 chunksize = utils.CHUNK_SIZE,
-            )
+            )))
+        return results
 
     # save paths
-    save_paths(input_dir = args.data_dir, output_dir = data_dir, desc = "Extracting tensors")
-    save_paths(input_dir = args.prebottleneck_data_dir, output_dir = prebottleneck_data_dir, desc = "Extracting prebottleneck tensors")
+    results = save_paths(input_dir = args.data_dir, output_dir = data_dir, desc = "Extracting tensors")
+    if generate_prebottleneck_data_dir:
+        _ = save_paths(input_dir = args.prebottleneck_data_dir, output_dir = prebottleneck_data_dir, desc = "Extracting prebottleneck tensors")
     
+    # generating mapping json files
+    bases_by_stem = [list(mapping.keys()) for mapping in results[0]] # base(s) for each stem in all_stems
+    for mappings, mapping_name in zip(results, utils.MAPPING_NAMES_BY_TASK[args.task]):
+        utils.save_json(
+            filepath = f"{mappings_dir}/{mapping_name}.{utils.JSON_FILETYPE}",
+            data = {stem: label for mapping in mappings for stem, label in mapping.items()},
+        )
+
     # free up memory
-    del convert_stems_to_absolute_paths, n_stems, save_path, save_paths, song_lengths
+    del n_stems, save_stem, save_paths, results
 
     ##################################################
 
@@ -356,13 +458,12 @@ if __name__ == "__main__":
         for partition in output_path_by_partition.keys():
             output_path = output_path_by_partition[partition]
             start, end = partition_ranges_in_all_stems[partition] # get start and end indicies of partition
-            data = all_stems[start:end] # extract correct range for the partition
-            data = list(map(lambda stem: f"{stem}.{utils.TENSOR_FILETYPE}", data)) # convert from stems to basenames
+            data = sum(bases_by_stem[start:end], []) # extract correct range for the partition
             utils.save_txt(filepath = output_path, data = data)
             logging.info(f"Wrote {partition} partition to {output_path}.")
 
     # free up memory
-    del all_stems
+    del all_stems, bases_by_stem
 
     ##################################################
 
@@ -371,8 +472,8 @@ if __name__ == "__main__":
     ##################################################
 
     # test dataset with different pooling values
-    for use_prebottleneck_latents in (False, True):
-        for pool in (False, True):
+    for use_prebottleneck_latents in [False] + ([True] if generate_prebottleneck_data_dir else []):
+        for pool in [False, True]:
 
             # print separator line
             logging.info(utils.MAJOR_SEPARATOR_LINE)
@@ -384,6 +485,7 @@ if __name__ == "__main__":
                 task = args.task,
                 directory = f"{utils.DIR_BY_TASK[args.task]}/{utils.DATA_DIR_NAME}/{utils.PREBOTTLENECK_DATA_SUBDIR_NAME if use_prebottleneck_latents else utils.DATA_SUBDIR_NAME}",
                 paths = output_path_by_partition[utils.VALID_PARTITION_NAME],
+                mappings_path = f"{mappings_dir}/{utils.MAPPING_NAMES_BY_TASK[args.task][0]}.{utils.JSON_FILETYPE}",
                 pool = pool,
             )
             data_loader = torch.utils.data.DataLoader(

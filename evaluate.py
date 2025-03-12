@@ -53,8 +53,8 @@ def parse_args(args = None, namespace = None):
     
     # infer other arguments
     input_dir = utils.DIR_BY_TASK[args.task]
-    args.paths_test = f"{input_dir}/{utils.DATA_DIR_NAME}/{utils.TEST_PARTITION_NAME}.txt"
-    args.models_list = f"{input_dir}/models.txt"        
+    args.paths_test = f"{input_dir}/{utils.DATA_DIR_NAME}/{utils.SPLITS_SUBDIR_NAME}/{utils.TEST_PARTITION_NAME}.txt"
+    args.models_list = f"{input_dir}/models.txt"
 
     # return parsed arguments
     return args
@@ -157,7 +157,7 @@ if __name__ == "__main__":
             del train_args_filepath
 
             # load dataset and data loader
-            dataset = get_dataset(task = task, directory = train_args["data_dir"], paths = args.paths_test, pool = train_args["prepool"])
+            dataset = get_dataset(task = task, directory = train_args["data_dir"], paths = args.paths_test, mappings_path = train_args["mappings_path"], pool = train_args["prepool"])
             data_loader = torch.utils.data.DataLoader(
                 dataset = dataset,
                 batch_size = args.batch_size,
