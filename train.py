@@ -231,9 +231,12 @@ if __name__ == "__main__":
     # print current step
     print(f"Current Step: {step:,}")
 
-    # iterate for the specified number of steps
+    # determine number of steps
     if args.steps is None: # infer number of steps if not provided
         args.steps = args.epochs * len(data_loader[utils.TRAIN_PARTITION_NAME])
+        # args.steps = min(args.steps, utils.MAX_N_STEPS) # ensure we aren't doing too many steps
+
+    # iterate for the specified number of steps
     while step < args.steps:
 
         # to store loss/accuracy values

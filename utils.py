@@ -10,13 +10,15 @@
 ##################################################
 
 import json
-from typing import Union, List, Tuple
+from typing import Union, List, Tuple, Any
 import numpy as np
+import pandas as pd
 import pickle
 from torch import uint8, float32
 
 from os.path import exists, dirname, realpath
-from os import mkdir
+from os import mkdir, makedirs
+from shutil import rmtree
 import argparse
 import logging
 
@@ -47,6 +49,7 @@ PREBOTTLENECK_DATA_SUBDIR_NAME = "prebottleneck"
 CHECKPOINTS_DIR_NAME = "checkpoints"
 DEFAULT_MODEL_NAME = "model"
 SYMLINKS_DIR_NAME = "symlinks"
+BASELINE_DIR_NAME = "baseline"
 
 # symlinks dir, use `ln -sf /path/to/directory /path/to/symlink` to create a new symlink
 SYMLINKS_DIR = f"{dirname(realpath(__file__))}/{SYMLINKS_DIR_NAME}"
@@ -90,6 +93,23 @@ def transpose(l: Union[List, Tuple]) -> list:
     """Tranpose a 2-dimension list."""
     return list(map(list, zip(*l)))
 
+def prettify_table(df: pd.DataFrame, column_widths: list = None) -> str:
+    """
+    Given a DataFrame `df`, return a string that is the prettified version of that data.
+    `column_widths` represent the width of each column in characters -- the length of 
+    `column_widths` must be equal to the number of columns in `df`.
+    """
+    truncate_string = lambda string, n: string + "".join([" " for _ in range(n - len(string))]) if len(string) <= n else string[:n - 3] + "..." # helper function to get strings of constant length
+    format_row = lambda row: "  ".join(map(truncate_string, map(str, row), column_widths)) # row is a list representing a row in the data frame
+    column_names_row = format_row(row = map(lambda column_name: column_name.upper(), df.columns))
+    output_string = f"{column_names_row}\n" # add column names to output string
+    output_string += "".join(("-" for _ in range(len(column_names_row)))) + "\n" # add separator line to output string
+    for i in df.index: # iterate through each row in data frame
+        output_string += format_row(row = df.iloc[i].tolist())
+        if i != df.index[-1]: # if not the last row
+            output_string += "\n"
+    return output_string
+
 ##################################################
 
 
@@ -131,7 +151,12 @@ def load_txt(filepath: str):
     """Load a TXT file as a list."""
     with open(filepath, encoding = "utf8") as f:
         return [line.strip() for line in f]
-    
+
+def save_pickle(filepath: str, data: Any):
+    """Save an object to a pickle file."""
+    with open(filepath, "wb") as f:
+        pickle.dump(obj = data, file = f)
+
 def load_pickle(filepath: str):
     """Load a pickle file."""
     with open(filepath, "rb") as f:
@@ -144,6 +169,13 @@ def count_lines(filepath: str):
         for _ in f:
             n += 1
     return n
+
+def directory_creator(directory: str, reset: bool = False):
+    """Helper function for creating directories."""
+    if not exists(directory) or reset:
+        if exists(directory):
+            rmtree(directory, ignore_errors = True)
+        makedirs(directory, exist_ok = True)
 
 ##################################################
 
@@ -174,7 +206,7 @@ FRONT_PAD = True
 
 # training defaults
 N_EPOCHS = 100
-N_STEPS = 50000
+MAX_N_STEPS = 10000 # maximum number of steps
 EARLY_STOPPING_TOLERANCE = 10
 LEARNING_RATE = 0.0005
 WEIGHT_DECAY = 0.1 # alternatively, 0.01
@@ -226,7 +258,7 @@ INDEX_TO_EMOTION_ID = inverse_dict(d = EMOTION_ID_TO_INDEX)
 EMOTION_INDEXER = EMOTION_ID_TO_INDEX
 
 # number of emotions per bar
-EVENTS_PER_BAR_BY_TASK[EMOTION_DIR_NAME] = 1
+EVENTS_PER_BAR_BY_TASK[EMOTION_DIR_NAME] = 1 # 1 because this is sequence-level, but pooled over bars
 
 # number of emotion classes
 N_EMOTION_CLASSES = len(EMOTIONS)
@@ -248,6 +280,12 @@ EVALUATION_ACCURACY_OUTPUT_COLUMNS_BY_TASK[EMOTION_DIR_NAME] = EVALUATION_ACCURA
 ##################################################
 
 # mappings
+DEFAULT_SCALE = ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"]
+DEFAULT_CHORD_QUALITIES = [
+    "maj", "min", "dim", "aug", "7", "maj7", "min7", "dim7", "hdim7", "sus2", "sus4",
+    "11", "13", "7(#9)", "9", "maj(11)", "maj(9)", "maj13", "maj6", "maj6(9)", "maj9", "maj9(11)", "min(11)", "min(9)", "min11", "min13", "min6", "min6(9)", "min9", "minmaj7", "sus4(b7)", "sus4(b7,9)",
+    ]
+NO_CHORD_SYMBOL = "N"
 CHORDS11 = [
     "A:7", "A:aug", "A:dim", "A:dim7", "A:hdim7", "A:maj", "A:maj7", "A:min", "A:min7", "A:sus2", "A:sus4",
     "Ab:7", "Ab:aug", "Ab:dim", "Ab:dim7", "Ab:hdim7", "Ab:maj", "Ab:maj7", "Ab:min", "Ab:min7", "Ab:sus2", "Ab:sus4",
@@ -261,7 +299,7 @@ CHORDS11 = [
     "F#:7", "F#:aug", "F#:dim", "F#:dim7", "F#:hdim7", "F#:maj", "F#:maj7", "F#:min", "F#:min7", "F#:sus2", "F#:sus4",
     "F:7", "F:aug", "F:dim", "F:dim7", "F:hdim7", "F:maj", "F:maj7", "F:min", "F:min7", "F:sus2", "F:sus4",
     "G:7", "G:aug", "G:dim", "G:dim7", "G:hdim7", "G:maj", "G:maj7", "G:min", "G:min7", "G:sus2", "G:sus4",
-    "N"]
+    NO_CHORD_SYMBOL]
 CHORDS32 = [
     "A:11", "A:13", "A:7", "A:7(#9)", "A:9", "A:aug", "A:dim", "A:dim7", "A:hdim7", "A:maj", "A:maj(11)", "A:maj(9)", 
     "A:maj13", "A:maj6", "A:maj6(9)", "A:maj7", "A:maj9", "A:maj9(11)", "A:min", "A:min(11)", "A:min(9)", "A:min11", 
@@ -299,7 +337,7 @@ CHORDS32 = [
     "G:11", "G:13", "G:7", "G:9", "G:aug", "G:dim", "G:dim7", "G:hdim7", "G:maj", "G:maj(11)", "G:maj(9)", "G:maj6", "G:maj6(9)", "G:maj7", "G:maj9", 
     "G:min", "G:min(11)", "G:min(9)", "G:min11", 
     "G:min13", "G:min6", "G:min6(9)", "G:min7", "G:min9", "G:minmaj7", "G:sus2", "G:sus4", "G:sus4(b7)", "G:sus4(b7,9)", 
-    "N"]
+    NO_CHORD_SYMBOL]
 # CHORDS32 = [
 #     "A:11", "A:13", "A:7", "A:7(#9)", "A:9", "A:aug", "A:dim", "A:dim7", "A:hdim7", "A:maj", "A:maj(11)", "A:maj(9)", 
 #     "A:maj13", "A:maj6", "A:maj6(9)", "A:maj7", "A:maj9", "A:maj9(11)", "A:min", "A:min(11)", "A:min(9)", "A:min11", 
@@ -337,7 +375,7 @@ CHORDS32 = [
 #     "G:11", "G:13", "G:7", "G:7(#9)", "G:9", "G:aug", "G:dim", "G:dim7", "G:hdim7", "G:maj", "G:maj(11)", "G:maj(9)", 
 #     "G:maj13", "G:maj6", "G:maj6(9)", "G:maj7", "G:maj9", "G:maj9(11)", "G:min", "G:min(11)", "G:min(9)", "G:min11", 
 #     "G:min13", "G:min6", "G:min6(9)", "G:min7", "G:min9", "G:minmaj7", "G:sus2", "G:sus4", "G:sus4(b7)", "G:sus4(b7,9)",
-#     "N"]
+#     NO_CHORD_SYMBOL]
 CHORD11_TO_INDEX = {chord: i for i, chord in enumerate(CHORDS11)}
 INDEX_TO_CHORD11 = inverse_dict(d = CHORD11_TO_INDEX)
 CHORD32_TO_INDEX = {chord: i for i, chord in enumerate(CHORDS32)}
@@ -357,6 +395,7 @@ MAX_SEQ_LEN_BY_TASK[CHORD_DIR_NAME] = 1 # must be 1, since this is a bar-by-bar 
 # mapping name(s) for chord
 JINGYUE_CHORD_MAPPING_DIR_NAMES = ["chord_pkl_11", "chord_pkl_32"]
 MAPPING_NAMES_BY_TASK[CHORD_DIR_NAME] = [CHORD_DIR_NAME + "_" + mapping_dir_name.split("_")[-1] for mapping_dir_name in JINGYUE_CHORD_MAPPING_DIR_NAMES]
+JINGYUE_CHORD_POP909_MIDI_DIR = f"{JINGYUE_DIR}/POP909_chord_recognition/midi_quantized_480"
 
 # chord evaluation output columns
 EVALUATION_LOSS_OUTPUT_COLUMNS_BY_TASK[CHORD_DIR_NAME] = EVALUATION_LOSS_OUTPUT_COLUMNS
@@ -375,7 +414,7 @@ INDEX_TO_STYLE = inverse_dict(d = STYLE_TO_INDEX)
 STYLE_INDEXER = STYLE_TO_INDEX
 
 # number of styles per bar
-EVENTS_PER_BAR_BY_TASK[STYLE_DIR_NAME] = 1
+EVENTS_PER_BAR_BY_TASK[STYLE_DIR_NAME] = 1 # 1 because this is sequence-level, but pooled over bars
 
 # number of style classes
 N_STYLE_CLASSES = len(STYLES)
@@ -395,6 +434,9 @@ EVALUATION_ACCURACY_OUTPUT_COLUMNS_BY_TASK[STYLE_DIR_NAME] = EVALUATION_ACCURACY
 
 # MISCELLANEOUS CONSTANTS
 ##################################################
+
+# error message
+INVALID_TASK_ERROR = lambda task: f"Invalid --task `{task}`"
 
 # wandb constants
 WANDB_PROJECT_NAME = "jingyue-latents"

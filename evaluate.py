@@ -271,26 +271,15 @@ if __name__ == "__main__":
     # LOG STATISTICS
     ##################################################
 
-    # helper function to print tables
-    def prettify_table(df: pd.DataFrame) -> str:
-        """Return the string for a table in a pretty way."""
-        truncate_string = lambda string, n: string + "".join([" " for _ in range(n - len(string))]) if len(string) <= n else string[:n - 3] + "..." # helper function to get strings of constant length
-        model_column_width, statistic_column_width = 30, 10 # table parameters
-        format_row = lambda model, statistic: truncate_string(string = model, n = model_column_width) + "  " + truncate_string(string = statistic, n = statistic_column_width) # format a row
-        column_names_row = format_row(model = df.columns[0].upper(), statistic = df.columns[1].upper())
-        output_string = f"{column_names_row}\n{''.join(('-' for _ in range(len(column_names_row))))}\n" # add column names and separator line to output string
-        for i in df.index: # iterate through each row in data frame
-            output_string += format_row(model = df.iat[i, 0], statistic = df.iat[i, 1]) + ("\n" if i != df.index[-1] else "")
-        return output_string
-
     # separator line
     logging.info(utils.MAJOR_SEPARATOR_LINE)
+    column_widths = [30, 10]
 
     # loss
     loss = pd.read_csv(filepath_or_buffer = loss_output_filepath, sep = ",", na_values = utils.NA_STRING, header = 0, index_col = False)
     loss = loss[["model", utils.LOSS_STATISTIC_NAME]].groupby(by = "model").mean().reset_index(drop = False)
     loss[utils.LOSS_STATISTIC_NAME] = list(map(lambda val: f"{val:.4f}", loss[utils.LOSS_STATISTIC_NAME]))
-    logging.info(prettify_table(df = loss))
+    logging.info(utils.prettify_table(df = loss, column_widths = column_widths))
     del loss
 
     # separator line
@@ -300,7 +289,7 @@ if __name__ == "__main__":
     accuracy = pd.read_csv(filepath_or_buffer = accuracy_output_filepath, sep = ",", na_values = utils.NA_STRING, header = 0, index_col = False)
     accuracy = accuracy[["model", "is_correct"]].groupby(by = "model").mean().reset_index(drop = False).rename(columns = {"is_correct": utils.ACCURACY_STATISTIC_NAME})
     accuracy[utils.ACCURACY_STATISTIC_NAME] = list(map(lambda val: f"{100 * val:.2f}%", accuracy[utils.ACCURACY_STATISTIC_NAME]))
-    logging.info(prettify_table(df = accuracy))
+    logging.info(utils.prettify_table(df = accuracy, column_widths = column_widths))
     del accuracy
 
     ##################################################

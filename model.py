@@ -31,20 +31,19 @@ class CustomMLP(nn.Module):
             input_dim: int, # number of input features
             output_dim: int, # number of output features
             prepool: bool = False, # whether inputs are prepooled
-            output_is_3d: bool = False, # whether the output of the forward pass is 3d (as opposed to 2d)
+            events_per_bar: int = 1, # whether there are multiple events per bar (0 means this is a sequence-level task)
             use_large: bool = False, # whether to use larger model
             use_small: bool = False, # whether to use smaller model
         ):
         super().__init__()
 
         # save variables
-        self.input_dim = input_dim
-        self.output_dim = output_dim
         self.prepool = prepool
-        self.output_is_3d = output_is_3d
+        self.events_per_bar = events_per_bar
+        output_dim *= self.events_per_bar # make sure the output dim is correct for the model
 
         # draft model architecture
-        if use_large: # large model has 49,732 parameters
+        if use_large: # large model
             layers = [
                 nn.Linear(in_features = input_dim, out_features = 2 * input_dim),
                 nn.ReLU(),
@@ -52,11 +51,11 @@ class CustomMLP(nn.Module):
                 nn.ReLU(),
                 nn.Linear(in_features = input_dim // 2, out_features = output_dim),
             ]
-        elif use_small: # small model has 516 parameters
+        elif use_small: # small model
             layers = [
                 nn.Linear(in_features = input_dim, out_features = output_dim),
             ]
-        else: # default to normal model with 8,516 parameters
+        else: # default to normal model
             layers = [
                 nn.Linear(in_features = input_dim, out_features = input_dim // 2),
                 nn.ReLU(),
@@ -88,8 +87,8 @@ class CustomMLP(nn.Module):
             del embedding_dim, output # free up memory
 
         # reshape logits any further if necessary
-        if self.output_is_3d and len(logits.shape) == 2:
-            logits = logits.reshape(batch_size, -1, self.output_dim) # reshape to (batch_size, number of events per bar, n_classes)
+        if self.events_per_bar > 1:
+            logits = logits.reshape(batch_size * self.events_per_bar, -1) # reshape to (batch_size * number of events per bar, n_classes)
 
         # return final logits
         return logits
@@ -106,18 +105,16 @@ class CustomTransformer(nn.Module):
     def __init__(self,
             input_dim: int, # number of input features
             output_dim: int, # number of output features
-            max_seq_len: int, # maximum sequence length
-            output_is_3d: bool = False, # whether the output of the forward pass is 3d (as opposed to 2d)
+            max_seq_len: int = 1, # maximum sequence length
+            events_per_bar: int = 1, # whether there are multiple events per bar (0 means this is a sequence-level task)
             use_large: bool = False, # whether to use larger model
             use_small: bool = False, # whether to use smaller model
         ):
         super().__init__()
 
         # save variables
-        self.input_dim = input_dim
-        self.output_dim = output_dim
-        self.max_seq_len = max_seq_len
-        self.output_is_3d = output_is_3d
+        self.events_per_bar = events_per_bar
+        output_dim *= self.events_per_bar # make sure the output dim is correct for the model
 
         # draft model architecture
         dropout = utils.TRANSFORMER_DROPOUT # dropout rate
@@ -189,8 +186,8 @@ class CustomTransformer(nn.Module):
         logits = self.fc_out(output) # shape is now (batch_size, n_classes)
 
         # reshape logits any further if necessary
-        if self.output_is_3d:
-            logits = logits.reshape(batch_size, -1, self.output_dim) # reshape to (batch_size, number of events per bar, n_classes)
+        if self.events_per_bar > 1:
+            logits = logits.reshape(batch_size * self.events_per_bar, -1) # reshape to (batch_size * number of events per bar, n_classes)
 
         # return final logits
         return logits
@@ -210,7 +207,7 @@ def get_model(args: dict) -> nn.Module:
     input_dim = utils.PREBOTTLENECK_LATENT_EMBEDDING_DIM if args.get("use_prebottleneck_latents", False) else utils.LATENT_EMBEDDING_DIM
     prepool = args.get("prepool", False)
     model_name = args.get("model_name")
-    output_is_3d = (task == utils.CHORD_DIR_NAME)
+    events_per_bar = utils.EVENTS_PER_BAR_BY_TASK[task]
 
     # task specific arguments
     match task:
@@ -232,7 +229,7 @@ def get_model(args: dict) -> nn.Module:
         model = CustomTransformer(
             input_dim = input_dim, output_dim = output_dim,
             max_seq_len = utils.MAX_SEQ_LEN_BY_TASK[task],
-            output_is_3d = output_is_3d,
+            events_per_bar = events_per_bar,
             use_large = use_large, use_small = use_small,
         )
 
@@ -241,7 +238,7 @@ def get_model(args: dict) -> nn.Module:
         model = CustomMLP(
             input_dim = input_dim, output_dim = output_dim,
             prepool = prepool, 
-            output_is_3d = output_is_3d,
+            events_per_bar = events_per_bar,
             use_large = use_large, use_small = use_small,
         )
 

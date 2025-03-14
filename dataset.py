@@ -143,11 +143,16 @@ class CustomDataset(torch.utils.data.Dataset):
         else:
             seqs = pad(seqs = seqs, length = max_seq_len)
             mask = get_mask(seqs = seqs, length = max_seq_len)
+        
+        # labels
+        labels = torch.stack(tensors = labels, dim = 0)
+        if len(labels.shape) > 1: # flatten labels if it is multi-dimensional
+            labels = labels.flatten()
 
         # return dictionary of sequences, labels, masks, and paths
         return {
             "seq": seqs.to(utils.DATA_TYPE),
-            "label": torch.stack(tensors = labels, dim = 0).to(utils.LABEL_TYPE),
+            "label": labels.to(utils.LABEL_TYPE),
             "mask": mask.to(torch.bool),
             "path": paths,
         }
@@ -237,24 +242,18 @@ if __name__ == "__main__":
     # create output dir
     if not exists(args.output_dir):
         mkdir(args.output_dir)
-    def directory_creator(directory: str):
-        """Helper function for creating relevant directories."""
-        if not exists(directory) or args.reset:
-            if exists(directory):
-                rmtree(directory, ignore_errors = True)
-            mkdir(directory)
     base_data_dir = f"{args.output_dir}/{utils.DATA_DIR_NAME}"
-    directory_creator(directory = base_data_dir)
+    utils.directory_creator(directory = base_data_dir, reset = args.reset)
     splits_dir = f"{base_data_dir}/{utils.SPLITS_SUBDIR_NAME}"
-    directory_creator(directory = splits_dir)
+    utils.directory_creator(directory = splits_dir, reset = args.reset)
     mappings_dir = f"{base_data_dir}/{utils.MAPPINGS_SUBDIR_NAME}"
-    directory_creator(directory = mappings_dir)
+    utils.directory_creator(directory = mappings_dir, reset = args.reset)
     data_dir = f"{base_data_dir}/{utils.DATA_SUBDIR_NAME}"
-    directory_creator(directory = data_dir)
+    utils.directory_creator(directory = data_dir, reset = args.reset)
     prebottleneck_data_dir = f"{base_data_dir}/{utils.PREBOTTLENECK_DATA_SUBDIR_NAME}"
     generate_prebottleneck_data_dir = exists(args.prebottleneck_data_dir)
     if generate_prebottleneck_data_dir: 
-        directory_creator(directory = prebottleneck_data_dir)
+        utils.directory_creator(directory = prebottleneck_data_dir, reset = args.reset)
 
     ##################################################
 
@@ -316,7 +315,7 @@ if __name__ == "__main__":
     # TASK-SPECIFIC FUNCTIONALITIES
     ##################################################
 
-    # stem to output stem converter
+    # given a stem, do whatever with it
     match args.task:
 
         # EMOTION
@@ -398,7 +397,7 @@ if __name__ == "__main__":
             
         # invalid task
         case _:
-            raise RuntimeError(f"Invalid --task `{args.task}`.")
+            raise RuntimeError(utils.INVALID_TASK_ERROR(task = args.task))
 
     ##################################################
 
