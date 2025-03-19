@@ -14,7 +14,7 @@ from typing import Union, List, Tuple, Any
 import numpy as np
 import pandas as pd
 import pickle
-from torch import uint8, float32
+import torch
 
 from os.path import exists, dirname, realpath
 from os import mkdir, makedirs
@@ -37,8 +37,8 @@ JINGYUE_DIR = "/deepfreeze/user_shares/jingyue"
 # tasks
 EMOTION_DIR_NAME = "emotion"
 CHORD_DIR_NAME = "chord"
-STYLE_DIR_NAME = "style"
-ALL_TASKS = [EMOTION_DIR_NAME, CHORD_DIR_NAME, STYLE_DIR_NAME]
+MELODY_DIR_NAME = "melody"
+ALL_TASKS = [EMOTION_DIR_NAME, CHORD_DIR_NAME, MELODY_DIR_NAME]
 
 # subdirectory names
 DATA_DIR_NAME = "data"
@@ -61,8 +61,10 @@ JINGYUE_SPLITS_SYMLINK_NAME = SPLITS_SUBDIR_NAME
 # will all be populated later
 DIR_BY_TASK = {task: f"{BASE_DIR}/{task}" for task in ALL_TASKS} # task name to BASE_DIR subdirectory
 MAX_SEQ_LEN_BY_TASK = dict() # task name to maximum sequence length for that task
-MAPPING_NAMES_BY_TASK = dict()
-EVENTS_PER_BAR_BY_TASK = dict() # number of events per bar for that task
+MAPPING_NAMES_BY_TASK = dict() # mapping name(s) for each task
+N_OUTPUTS_PER_INPUT_BAR_BY_TASK = dict() # number of events per bar for that task
+JINGYUE_DIR_BY_TASK = dict() # jingyue's data dir for each task
+VOCABULARY_SIZE_BY_TASK = {task: 0 for task in ALL_TASKS} # default to no vocabulary for each task
 
 ##################################################
 
@@ -191,8 +193,9 @@ ALL_PARTITIONS = [TRAIN_PARTITION_NAME, VALID_PARTITION_NAME, TEST_PARTITION_NAM
 RELEVANT_TRAINING_PARTITIONS = ALL_PARTITIONS[:2]
 
 # data types for custom dataset
-DATA_TYPE = float32
-LABEL_TYPE = uint8
+DATA_TYPE = torch.float32
+TOKEN_TYPE = torch.int32
+LABEL_TYPE = torch.uint8
 
 # training statistics
 LOSS_STATISTIC_NAME = "loss"
@@ -206,7 +209,8 @@ FRONT_PAD = True
 
 # training defaults
 N_EPOCHS = 100
-MAX_N_STEPS = 10000 # maximum number of steps
+MAX_N_STEPS = 100000 # maximum number of steps
+MAX_N_VALID_STEPS = 2000 # number of steps between each validation
 EARLY_STOPPING_TOLERANCE = 10
 LEARNING_RATE = 0.0005
 WEIGHT_DECAY = 0.1 # alternatively, 0.01
@@ -258,7 +262,7 @@ INDEX_TO_EMOTION_ID = inverse_dict(d = EMOTION_ID_TO_INDEX)
 EMOTION_INDEXER = EMOTION_ID_TO_INDEX
 
 # number of emotions per bar
-EVENTS_PER_BAR_BY_TASK[EMOTION_DIR_NAME] = 1 # 1 because this is sequence-level, but pooled over bars
+N_OUTPUTS_PER_INPUT_BAR_BY_TASK[EMOTION_DIR_NAME] = 1 # because 1 emotion is predicted for each input bar (and later pooled across the song)
 
 # number of emotion classes
 N_EMOTION_CLASSES = len(EMOTIONS)
@@ -268,6 +272,7 @@ MAX_SEQ_LEN_BY_TASK[EMOTION_DIR_NAME] = 42
 
 # mapping name(s) for emotion
 MAPPING_NAMES_BY_TASK[EMOTION_DIR_NAME] = [EMOTION_DIR_NAME]
+JINGYUE_DIR_BY_TASK[EMOTION_DIR_NAME] = f"{JINGYUE_DIR}/EMOPIA_emotion_recognition"
 
 # emotion evaluation output columns
 EVALUATION_LOSS_OUTPUT_COLUMNS_BY_TASK[EMOTION_DIR_NAME] = EVALUATION_LOSS_OUTPUT_COLUMNS
@@ -383,7 +388,7 @@ INDEX_TO_CHORD32 = inverse_dict(d = CHORD32_TO_INDEX)
 CHORD_INDEXER = [CHORD11_TO_INDEX, CHORD32_TO_INDEX] # make sure the order lines up with the order of JINGYUE_CHORD_MAPPING_DIR_NAMES
 
 # number of chords per bar
-EVENTS_PER_BAR_BY_TASK[CHORD_DIR_NAME] = 4
+N_OUTPUTS_PER_INPUT_BAR_BY_TASK[CHORD_DIR_NAME] = 4 # 4, because 4 chords are predicted for each input bar
 
 # number of chord classes
 N_CHORD11_CLASSES = len(CHORDS11)
@@ -395,7 +400,8 @@ MAX_SEQ_LEN_BY_TASK[CHORD_DIR_NAME] = 1 # must be 1, since this is a bar-by-bar 
 # mapping name(s) for chord
 JINGYUE_CHORD_MAPPING_DIR_NAMES = ["chord_pkl_11", "chord_pkl_32"]
 MAPPING_NAMES_BY_TASK[CHORD_DIR_NAME] = [CHORD_DIR_NAME + "_" + mapping_dir_name.split("_")[-1] for mapping_dir_name in JINGYUE_CHORD_MAPPING_DIR_NAMES]
-JINGYUE_CHORD_POP909_MIDI_DIR = f"{JINGYUE_DIR}/POP909_chord_recognition/midi_quantized_480"
+JINGYUE_DIR_BY_TASK[CHORD_DIR_NAME] = f"{JINGYUE_DIR}/POP909_chord_recognition"
+JINGYUE_CHORD_POP909_MIDI_DIR = f"{JINGYUE_DIR_BY_TASK[CHORD_DIR_NAME]}/midi_quantized_480"
 
 # chord evaluation output columns
 EVALUATION_LOSS_OUTPUT_COLUMNS_BY_TASK[CHORD_DIR_NAME] = EVALUATION_LOSS_OUTPUT_COLUMNS
@@ -404,30 +410,47 @@ EVALUATION_ACCURACY_OUTPUT_COLUMNS_BY_TASK[CHORD_DIR_NAME] = EVALUATION_ACCURACY
 ##################################################
 
 
-# STYLE CONSTANTS
+# MELODY CONSTANTS
 ##################################################
 
 # mappings
-STYLES = ["Bethel", "Clayderman", "Einaudi", "Hancock", "Hillsong", "Hisaishi", "Ryuichi", "Yiruma"]
-STYLE_TO_INDEX = {style: i for i, style in enumerate(STYLES)}
-INDEX_TO_STYLE = inverse_dict(d = STYLE_TO_INDEX)
-STYLE_INDEXER = STYLE_TO_INDEX
+MELODIES = ["vocal", "accompaniment", "instrument"]
+MELODY_TO_MELODY_ID = {melody: i + 1 for i, melody in enumerate(MELODIES)}
+MELODY_TO_INDEX = {melody: i for i, melody in enumerate(MELODY_TO_MELODY_ID.keys())}
+MELODY_ID_TO_INDEX = {melody_id: i for i, melody_id in enumerate(MELODY_TO_MELODY_ID.values())}
+MELODY_ID_TO_MELODY = inverse_dict(d = MELODY_TO_MELODY_ID)
+INDEX_TO_MELODY = inverse_dict(d = MELODY_TO_INDEX)
+INDEX_TO_MELODY_ID = inverse_dict(d = MELODY_ID_TO_INDEX)
+MELODY_INDEXER = MELODY_ID_TO_INDEX
 
-# number of styles per bar
-EVENTS_PER_BAR_BY_TASK[STYLE_DIR_NAME] = 1 # 1 because this is sequence-level, but pooled over bars
+# number of melodies per bar
+N_OUTPUTS_PER_INPUT_BAR_BY_TASK[MELODY_DIR_NAME] = 1 # because 1 melody is predicted for each input bar
 
-# number of style classes
-N_STYLE_CLASSES = len(STYLES)
+# number of melody classes
+N_MELODY_CLASSES = len(MELODIES)
 
-# maximum song length (in bars) for style data
-MAX_SEQ_LEN_BY_TASK[STYLE_DIR_NAME] = 42
+# remi-related stuff
+MELODY_REMI_WORD_TYPES = ["Beat", "Note_Pitch", "Note_Duration"]
+MELODY_REMI_VALUES_BY_WORD_TYPE = dict(zip(MELODY_REMI_WORD_TYPES, (
+    [0, 2, 3, 4, 6, 8, 9, 10, 12, 14, 15, 16, 18, 20, 21, 22, 24, 26, 27, 28, 30, 32, 33, 34, 36, 38, 39, 40, 42, 44, 45, 46], # onset
+    [21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108], # pitch
+    [80, 120, 160, 240, 320, 360, 480, 640, 720, 960, 1440, 1920], # duration
+)))
+MELODY_CLASS_WORD_TYPE = "Note_Track"
+MELODY_REMI_VOCABULARY = {word: i for i, word in enumerate([f"{word_type}_{value}" for word_type in MELODY_REMI_WORD_TYPES for value in MELODY_REMI_VALUES_BY_WORD_TYPE[word_type]])}
+VOCABULARY_SIZE_BY_TASK[MELODY_DIR_NAME] = len(MELODY_REMI_VOCABULARY)
 
-# mapping name(s) for style
-MAPPING_NAMES_BY_TASK[STYLE_DIR_NAME] = [STYLE_DIR_NAME]
+# maximum song length (in bars) for melody data
+MAX_SEQ_LEN_BY_TASK[MELODY_DIR_NAME] = 1 # must be 1, since this is a note-by-note classification task
 
-# style evaluation output columns
-EVALUATION_LOSS_OUTPUT_COLUMNS_BY_TASK[STYLE_DIR_NAME] = EVALUATION_LOSS_OUTPUT_COLUMNS
-EVALUATION_ACCURACY_OUTPUT_COLUMNS_BY_TASK[STYLE_DIR_NAME] = EVALUATION_ACCURACY_OUTPUT_COLUMNS
+# mapping name(s) for melody
+JINGYUE_MELODY_MAPPING_DIR_NAME = "data_events"
+MAPPING_NAMES_BY_TASK[MELODY_DIR_NAME] = [MELODY_DIR_NAME]
+JINGYUE_DIR_BY_TASK[MELODY_DIR_NAME] = f"{JINGYUE_DIR}/POP909_melody_classification"
+
+# melody evaluation output columns
+EVALUATION_LOSS_OUTPUT_COLUMNS_BY_TASK[MELODY_DIR_NAME] = EVALUATION_LOSS_OUTPUT_COLUMNS
+EVALUATION_ACCURACY_OUTPUT_COLUMNS_BY_TASK[MELODY_DIR_NAME] = EVALUATION_ACCURACY_OUTPUT_COLUMNS
 
 ##################################################
 

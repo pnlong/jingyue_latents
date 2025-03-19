@@ -54,6 +54,7 @@ def parse_args(args = None, namespace = None):
     parser.add_argument("-bs", "--batch_size", default = utils.BATCH_SIZE, type = int, help = "Batch size for data loader")
     parser.add_argument("--epochs", default = utils.N_EPOCHS, type = int, help = "Number of epochs")
     parser.add_argument("--steps", default = None, type = int, help = "Number of steps")
+    parser.add_argument("--valid_steps", default = None, type = int, help = "Validation frequency")
     parser.add_argument("--early_stopping", action = "store_true", help = "Whether to use early stopping")
     parser.add_argument("--early_stopping_tolerance", default = utils.EARLY_STOPPING_TOLERANCE, type = int, help = "Number of extra validation rounds before early stopping")
     parser.add_argument("-wd", "--weight_decay", default = utils.WEIGHT_DECAY, type = float, help = "Weight decay for L2 regularization")
@@ -116,8 +117,8 @@ if __name__ == "__main__":
     # create the dataset and data loader
     print(f"Creating the data loader...")
     dataset = {
-        utils.TRAIN_PARTITION_NAME: get_dataset(task = task, directory = args.data_dir, paths = args.paths_train, mappings_path = args.mappings_path, pool = args.prepool),
-        utils.VALID_PARTITION_NAME: get_dataset(task = task, directory = args.data_dir, paths = args.paths_valid, mappings_path = args.mappings_path, pool = args.prepool),
+        utils.TRAIN_PARTITION_NAME: get_dataset(task = task, directory = args.data_dir, paths = args.paths_train, mappings_path = args.mappings_path, pool = args.prepool, use_prebottleneck_latents = args.use_prebottleneck_latents),
+        utils.VALID_PARTITION_NAME: get_dataset(task = task, directory = args.data_dir, paths = args.paths_valid, mappings_path = args.mappings_path, pool = args.prepool, use_prebottleneck_latents = args.use_prebottleneck_latents),
     }
     data_loader = {
         utils.TRAIN_PARTITION_NAME: torch.utils.data.DataLoader(dataset = dataset[utils.TRAIN_PARTITION_NAME], batch_size = args.batch_size, shuffle = True, num_workers = args.jobs, collate_fn = dataset[utils.TRAIN_PARTITION_NAME].collate),
@@ -234,9 +235,14 @@ if __name__ == "__main__":
     # determine number of steps
     if args.steps is None: # infer number of steps if not provided
         args.steps = args.epochs * len(data_loader[utils.TRAIN_PARTITION_NAME])
-        # args.steps = min(args.steps, utils.MAX_N_STEPS) # ensure we aren't doing too many steps
+        args.steps = min(args.steps, utils.MAX_N_STEPS) # ensure we aren't doing too many steps
+
+    # determine number of validation steps
+    if args.valid_steps is None:
+        valid_steps = min(len(data_loader[utils.TRAIN_PARTITION_NAME]), utils.MAX_N_VALID_STEPS)
 
     # iterate for the specified number of steps
+    train_iter = iter(data_loader[utils.TRAIN_PARTITION_NAME]) # training iterator
     while step < args.steps:
 
         # to store loss/accuracy values
@@ -251,18 +257,30 @@ if __name__ == "__main__":
         # put model into training mode
         model.train()
         count = 0 # count number of songs
-        for batch in (progress_bar := tqdm(iterable = data_loader[utils.TRAIN_PARTITION_NAME], desc = "Training")):
+        for batch in (progress_bar := tqdm(iterable = range(valid_steps), desc = "Training")):
+
+            # get batch
+            try:
+                batch = next(train_iter)
+            except (StopIteration):
+                train_iter = iter(data_loader[utils.TRAIN_PARTITION_NAME]) # reset training iterator
+                batch = next(train_iter)
 
             # get input and output pair
             inputs, labels, mask = batch["seq"], batch["label"], batch["mask"]
             inputs, labels, mask = inputs.to(device), labels.to(device), mask.to(device) # move to device
             current_batch_size = len(labels)
 
+            # get tokens if any
+            tokens = batch["token"]
+            if tokens is not None:
+                tokens = tokens.to(device) # move to device
+
             # zero gradients
             optimizer.zero_grad()
 
             # get outputs
-            outputs = model(input = inputs, mask = mask)
+            outputs = model(input = inputs, mask = mask, tokens = tokens)
 
             # compute the loss and its gradients
             loss = loss_fn(outputs, labels)
@@ -326,8 +344,13 @@ if __name__ == "__main__":
                 inputs, labels, mask = inputs.to(device), labels.to(device), mask.to(device) # move to device
                 current_batch_size = len(labels)
 
+                # get tokens if any
+                tokens = batch["token"]
+                if tokens is not None:
+                    tokens = tokens.to(device) # move to device
+
                 # get outputs
-                outputs = model(input = inputs, mask = mask)
+                outputs = model(input = inputs, mask = mask, tokens = tokens)
 
                 # compute the loss and its gradients
                 loss = loss_fn(outputs, labels)

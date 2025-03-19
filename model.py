@@ -31,7 +31,8 @@ class CustomMLP(nn.Module):
             input_dim: int, # number of input features
             output_dim: int, # number of output features
             prepool: bool = False, # whether inputs are prepooled
-            events_per_bar: int = 1, # whether there are multiple events per bar (0 means this is a sequence-level task)
+            n_outputs_per_input_bar: int = 1, # whether there are multiple events per bar (0 means this is a sequence-level task)
+            vocabulary_size: int = 0, # size of token vocabulary
             use_large: bool = False, # whether to use larger model
             use_small: bool = False, # whether to use smaller model
         ):
@@ -39,8 +40,8 @@ class CustomMLP(nn.Module):
 
         # save variables
         self.prepool = prepool
-        self.events_per_bar = events_per_bar
-        output_dim *= self.events_per_bar # make sure the output dim is correct for the model
+        self.n_outputs_per_input_bar = n_outputs_per_input_bar
+        output_dim *= n_outputs_per_input_bar # make sure the output dim is correct for the model
 
         # draft model architecture
         if use_large: # large model
@@ -65,30 +66,49 @@ class CustomMLP(nn.Module):
         # create model
         self.mlp = nn.Sequential(*layers)
 
+        # token embeddings (learned)
+        if vocabulary_size > 0:
+            self.token_embeddings = nn.Embedding(
+                num_embeddings = vocabulary_size,
+                embedding_dim = input_dim,
+            )
+
     # forward pass
     def forward(self,
             input: torch.Tensor,
             mask: torch.Tensor,
+            tokens: torch.Tensor = None,
         ):
+
+        # get some dimensions
+        batch_size = input.shape[0]
+        num_bar = 1 if self.prepool else input.shape[1]
+        embedding_dim = input.shape[-1]
+
+        # deal with tokens
+        if tokens is not None:
+            tokens = self.token_embeddings(tokens) # pass through embeddings
+            tokens = tokens.sum(dim = -2) # sum across different token types
+            tokens = tokens.reshape(batch_size * num_bar, embedding_dim) # reshape to two dimensions
+        else: # if not using tokens, just have a matrix of zeros (so no effect)
+            tokens = torch.zeros(size = (batch_size * num_bar, embedding_dim), dtype = utils.TOKEN_TYPE)
 
         # if num_bar dimension was already reduced
         if self.prepool:
-            batch_size, embedding_dim = input.shape
-            logits = self.mlp(input) # simply get logits by feeding the input through the model
+            logits = self.mlp(input + tokens) # simply get logits by feeding the input through the model
 
         # if num_bar dimension wasn't reduced, and we pool ourselves
         else:
-            batch_size, num_bar, embedding_dim = input.shape
             input = input.reshape(batch_size * num_bar, embedding_dim) # reshape input from (batch_size, num_bar, embedding_dim) to (batch_size * num_bar, embedding_dim)
-            output = self.mlp(input) # feed input through model, which yields an output of size (batch_size * num_bar, n_classes)
+            output = self.mlp(input + tokens) # feed input through model, which yields an output of size (batch_size * num_bar, n_classes)
             output = output.reshape(batch_size, num_bar, -1) # reshape output to size (batch_size, num_bar, n_classes)
             output = output * mask.unsqueeze(dim = -1) # apply mask (size of (batch_size, num_bar)) to output
             logits = output.sum(dim = 1) / mask.sum(dim = -1).unsqueeze(dim = -1) # average output to reduce num_bar dimension; output is now of size (batch_size, n_classes)
-            del embedding_dim, output # free up memory
+            del output # free up memory
 
         # reshape logits any further if necessary
-        if self.events_per_bar > 1:
-            logits = logits.reshape(batch_size * self.events_per_bar, -1) # reshape to (batch_size * number of events per bar, n_classes)
+        if self.n_outputs_per_input_bar > 1:
+            logits = logits.reshape(batch_size * self.n_outputs_per_input_bar, -1) # reshape to (batch_size * number of events per bar, n_classes)
 
         # return final logits
         return logits
@@ -106,15 +126,16 @@ class CustomTransformer(nn.Module):
             input_dim: int, # number of input features
             output_dim: int, # number of output features
             max_seq_len: int = 1, # maximum sequence length
-            events_per_bar: int = 1, # whether there are multiple events per bar (0 means this is a sequence-level task)
+            n_outputs_per_input_bar: int = 1, # whether there are multiple events per bar (0 means this is a sequence-level task)
+            vocabulary_size: int = 0, # size of token vocabulary
             use_large: bool = False, # whether to use larger model
             use_small: bool = False, # whether to use smaller model
         ):
         super().__init__()
 
         # save variables
-        self.events_per_bar = events_per_bar
-        output_dim *= self.events_per_bar # make sure the output dim is correct for the model
+        self.n_outputs_per_input_bar = n_outputs_per_input_bar
+        output_dim *= n_outputs_per_input_bar # make sure the output dim is correct for the model
 
         # draft model architecture
         dropout = utils.TRANSFORMER_DROPOUT # dropout rate
@@ -129,6 +150,13 @@ class CustomTransformer(nn.Module):
             heads //= 2
             layers //= 2
             feedforward_layers //= 2
+
+        # token embeddings (learned)
+        if vocabulary_size > 0:
+            self.token_embeddings = nn.Embedding(
+                num_embeddings = vocabulary_size,
+                embedding_dim = input_dim,
+            )
 
         # positional embeddings (learned)
         self.position_embeddings = nn.Embedding(
@@ -155,21 +183,29 @@ class CustomTransformer(nn.Module):
     def forward(self,
             input: torch.Tensor,
             mask: torch.Tensor,
+            tokens: torch.Tensor = None,
         ):
 
-        # helper variable
-        batch_size = len(input)
+        # get some dimensions
+        batch_size, num_bar, embedding_dim = input.shape
+
+        # deal with tokens
+        if tokens is not None:
+            tokens = self.token_embeddings(tokens) # pass through embeddings
+            tokens = tokens.sum(dim = -2) # sum across different token types
+        else: # if not using tokens, just have a matrix of zeros (so no effect)
+            tokens = torch.zeros(size = (batch_size, num_bar, embedding_dim), dtype = utils.TOKEN_TYPE)
 
         # wrangle mask
         mask = torch.logical_not(input = mask) # padding values must be True
 
         # calculate positional embedding
-        position_indicies = torch.arange(input.shape[1], dtype = torch.long, device = input.device) # get positions for a single batch
-        position_indicies = position_indicies.unsqueeze(dim = 0).repeat(input.shape[0], 1) # repeat positions across all sequences in batch to size (batch_size, num_bar)
-        position_embeddings = self.position_embeddings(position_indicies) # calculate positional embeddings from positions
+        position_indicies = torch.arange(num_bar, dtype = torch.long, device = input.device) # get positions for a single batch
+        position_indicies = position_indicies.unsqueeze(dim = 0).repeat(batch_size, 1) # repeat positions across all sequences in batch to size (batch_size, num_bar)
+        position_embeddings = self.position_embeddings(position_indicies) # calculate positional embeddings from positions, which yields a result of size (batch_size, num_bar, embedding_dim)
 
         # wrangle input
-        input = input + position_embeddings # add positional embeddings to input
+        input = input + tokens + position_embeddings # add positional embeddings to input
         
         # passing through transformer
         output = self.transformer(
@@ -186,8 +222,8 @@ class CustomTransformer(nn.Module):
         logits = self.fc_out(output) # shape is now (batch_size, n_classes)
 
         # reshape logits any further if necessary
-        if self.events_per_bar > 1:
-            logits = logits.reshape(batch_size * self.events_per_bar, -1) # reshape to (batch_size * number of events per bar, n_classes)
+        if self.n_outputs_per_input_bar > 1:
+            logits = logits.reshape(batch_size * self.n_outputs_per_input_bar, -1) # reshape to (batch_size * number of events per bar, n_classes)
 
         # return final logits
         return logits
@@ -206,8 +242,10 @@ def get_model(args: dict) -> nn.Module:
     use_transformer = args.get("use_transformer", False)
     input_dim = utils.PREBOTTLENECK_LATENT_EMBEDDING_DIM if args.get("use_prebottleneck_latents", False) else utils.LATENT_EMBEDDING_DIM
     prepool = args.get("prepool", False)
+    max_seq_len = utils.MAX_SEQ_LEN_BY_TASK[task]
     model_name = args.get("model_name")
-    events_per_bar = utils.EVENTS_PER_BAR_BY_TASK[task]
+    n_outputs_per_input_bar = utils.N_OUTPUTS_PER_INPUT_BAR_BY_TASK[task]
+    vocabulary_size = utils.VOCABULARY_SIZE_BY_TASK[task]
 
     # task specific arguments
     match task:
@@ -215,8 +253,8 @@ def get_model(args: dict) -> nn.Module:
             output_dim = utils.N_EMOTION_CLASSES
         case utils.CHORD_DIR_NAME:
             output_dim = utils.N_CHORD32_CLASSES if args.get("use_precise_labels", False) else utils.N_CHORD11_CLASSES
-        case utils.STYLE_DIR_NAME:
-            output_dim = utils.N_STYLE_CLASSES
+        case utils.MELODY_DIR_NAME:
+            output_dim = utils.N_MELODY_CLASSES
     
     # determine small or large
     use_large = "large" in model_name
@@ -228,8 +266,9 @@ def get_model(args: dict) -> nn.Module:
     if use_transformer:
         model = CustomTransformer(
             input_dim = input_dim, output_dim = output_dim,
-            max_seq_len = utils.MAX_SEQ_LEN_BY_TASK[task],
-            events_per_bar = events_per_bar,
+            max_seq_len = max_seq_len,
+            n_outputs_per_input_bar = n_outputs_per_input_bar,
+            vocabulary_size = vocabulary_size,
             use_large = use_large, use_small = use_small,
         )
 
@@ -238,7 +277,8 @@ def get_model(args: dict) -> nn.Module:
         model = CustomMLP(
             input_dim = input_dim, output_dim = output_dim,
             prepool = prepool, 
-            events_per_bar = events_per_bar,
+            n_outputs_per_input_bar = n_outputs_per_input_bar,
+            vocabulary_size = vocabulary_size,
             use_large = use_large, use_small = use_small,
         )
 

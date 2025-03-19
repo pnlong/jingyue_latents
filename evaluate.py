@@ -157,7 +157,7 @@ if __name__ == "__main__":
             del train_args_filepath
 
             # load dataset and data loader
-            dataset = get_dataset(task = task, directory = train_args["data_dir"], paths = args.paths_test, mappings_path = train_args["mappings_path"], pool = train_args["prepool"])
+            dataset = get_dataset(task = task, directory = train_args["data_dir"], paths = args.paths_test, mappings_path = train_args["mappings_path"], pool = train_args["prepool"], use_prebottleneck_latents = train_args["use_prebottleneck_latents"])
             data_loader = torch.utils.data.DataLoader(
                 dataset = dataset,
                 batch_size = args.batch_size,
@@ -206,8 +206,13 @@ if __name__ == "__main__":
                     current_batch_size = len(labels)
                     model_column = utils.rep(x = model_column_value, times = current_batch_size)
 
+                    # get tokens if any
+                    tokens = batch["token"]
+                    if tokens is not None:
+                        tokens = tokens.to(device) # move to device
+
                     # get outputs
-                    outputs = model(input = inputs, mask = mask)
+                    outputs = model(input = inputs, mask = mask, tokens = tokens)
 
                     # compute the loss and its gradients
                     loss = loss_fn(outputs, labels)

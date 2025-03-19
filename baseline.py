@@ -12,15 +12,10 @@
 from typing import Tuple
 from os.path import exists, dirname, realpath, basename
 from os import mkdir, listdir
-from shutil import rmtree
 import argparse
 import logging
 import multiprocessing
 from tqdm import tqdm
-import pandas as pd
-
-from chorder import Dechorder, Chord
-from miditoolkit import MidiFile
 
 from os.path import dirname, realpath
 import sys
@@ -89,6 +84,9 @@ if __name__ == "__main__":
 
     if args.task == utils.EMOTION_DIR_NAME:
 
+        # relevant imports
+        import pandas as pd
+
         # copying table from https://arxiv.org/pdf/2107.05223
         data = pd.DataFrame(data = {
             "token": utils.rep(x = "REMI", times = 4) + utils.rep(x = "CP", times = 4) + ["OctupleMIDI"],
@@ -108,6 +106,10 @@ if __name__ == "__main__":
     ##################################################
 
     elif args.task == utils.CHORD_DIR_NAME:
+
+        # relevant imports
+        from chorder import Dechorder, Chord
+        from miditoolkit import MidiFile
 
         # get list of midi files
         paths = list(map(lambda base: f"{utils.JINGYUE_CHORD_POP909_MIDI_DIR}/{base}", listdir(utils.JINGYUE_CHORD_POP909_MIDI_DIR)))
@@ -187,10 +189,10 @@ if __name__ == "__main__":
     ##################################################
 
     
-    # STYLE
+    # MELODY
     ##################################################
 
-    elif args.task == utils.STYLE_DIR_NAME:
+    elif args.task == utils.MELODY_DIR_NAME:
         pass
         
     ##################################################
