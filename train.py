@@ -235,11 +235,12 @@ if __name__ == "__main__":
     # determine number of steps
     if args.steps is None: # infer number of steps if not provided
         args.steps = args.epochs * len(data_loader[utils.TRAIN_PARTITION_NAME])
-        args.steps = min(args.steps, utils.MAX_N_STEPS) # ensure we aren't doing too many steps
+        # args.steps = min(args.steps, utils.MAX_N_STEPS) # ensure we aren't doing too many steps
 
     # determine number of validation steps
     if args.valid_steps is None:
-        valid_steps = min(len(data_loader[utils.TRAIN_PARTITION_NAME]), utils.MAX_N_VALID_STEPS)
+        args.valid_steps = len(data_loader[utils.TRAIN_PARTITION_NAME])
+        # args.valid_steps = min(args.valid_steps, utils.MAX_N_VALID_STEPS) # ensure we aren't doing too many validation steps
 
     # iterate for the specified number of steps
     train_iter = iter(data_loader[utils.TRAIN_PARTITION_NAME]) # training iterator
@@ -257,7 +258,7 @@ if __name__ == "__main__":
         # put model into training mode
         model.train()
         count = 0 # count number of songs
-        for batch in (progress_bar := tqdm(iterable = range(valid_steps), desc = "Training")):
+        for batch in (progress_bar := tqdm(iterable = range(args.valid_steps), desc = "Training")):
 
             # get batch
             try:
