@@ -38,7 +38,8 @@ JINGYUE_DIR = "/deepfreeze/user_shares/jingyue"
 EMOTION_DIR_NAME = "emotion"
 CHORD_DIR_NAME = "chord"
 MELODY_DIR_NAME = "melody"
-ALL_TASKS = [EMOTION_DIR_NAME, CHORD_DIR_NAME, MELODY_DIR_NAME]
+MELODY_TRANSFORMER_DIR_NAME = "melody_transformer"
+ALL_TASKS = [EMOTION_DIR_NAME, CHORD_DIR_NAME, MELODY_DIR_NAME, MELODY_TRANSFORMER_DIR_NAME]
 
 # subdirectory names
 DATA_DIR_NAME = "data"
@@ -50,6 +51,8 @@ CHECKPOINTS_DIR_NAME = "checkpoints"
 DEFAULT_MODEL_NAME = "model"
 SYMLINKS_DIR_NAME = "symlinks"
 BASELINE_DIR_NAME = "baseline"
+TOKEN_SUBDIR_NAME = "tokens"
+BAR_POSITION_SUBDIR_NAME = "bar_positions"
 
 # symlinks dir, use `ln -sf /path/to/directory /path/to/symlink` to create a new symlink
 SYMLINKS_DIR = f"{dirname(realpath(__file__))}/{SYMLINKS_DIR_NAME}"
@@ -60,9 +63,10 @@ JINGYUE_SPLITS_SYMLINK_NAME = SPLITS_SUBDIR_NAME
 
 # will all be populated later
 DIR_BY_TASK = {task: f"{BASE_DIR}/{task}" for task in ALL_TASKS} # task name to BASE_DIR subdirectory
-MAX_SEQ_LEN_BY_TASK = dict() # task name to maximum sequence length for that task
-MAPPING_NAMES_BY_TASK = dict() # mapping name(s) for each task
-N_OUTPUTS_PER_INPUT_BAR_BY_TASK = dict() # number of events per bar for that task
+MAX_SEQ_LEN_BY_TASK = {task: 1 for task in ALL_TASKS} # task name to maximum sequence length for that task
+TOKEN_MAX_SEQ_LEN_BY_TASK = {task: 0 for task in ALL_TASKS}
+MAPPING_NAMES_BY_TASK = {task: [task] for task in ALL_TASKS} # mapping name(s) for each task
+N_OUTPUTS_PER_INPUT_BAR_BY_TASK = {task: 1 for task in ALL_TASKS} # number of events per bar for that task
 JINGYUE_DIR_BY_TASK = dict() # jingyue's data dir for each task
 VOCABULARY_SIZE_BY_TASK = {task: 0 for task in ALL_TASKS} # default to no vocabulary for each task
 
@@ -102,7 +106,7 @@ def prettify_table(df: pd.DataFrame, column_widths: list = None) -> str:
     `column_widths` must be equal to the number of columns in `df`.
     """
     truncate_string = lambda string, n: string + "".join([" " for _ in range(n - len(string))]) if len(string) <= n else string[:n - 3] + "..." # helper function to get strings of constant length
-    format_row = lambda row: "  ".join(map(truncate_string, map(str, row), column_widths)) # row is a list representing a row in the data frame
+    format_row = lambda row: "  ".join(map(truncate_string, map(lambda elem: str(elem) if not pd.isna(elem) else "", row), column_widths)) # row is a list representing a row in the data frame
     column_names_row = format_row(row = map(lambda column_name: column_name.upper(), df.columns))
     output_string = f"{column_names_row}\n" # add column names to output string
     output_string += "".join(("-" for _ in range(len(column_names_row)))) + "\n" # add separator line to output string
@@ -195,6 +199,7 @@ RELEVANT_TRAINING_PARTITIONS = ALL_PARTITIONS[:2]
 # data types for custom dataset
 DATA_TYPE = torch.float32
 TOKEN_TYPE = torch.int32
+BAR_POSITION_TYPE = torch.int32
 LABEL_TYPE = torch.uint8
 
 # training statistics
@@ -205,12 +210,13 @@ TRAINING_STATISTICS_OUTPUT_COLUMNS = ["step", "partition", f"is_{LOSS_STATISTIC_
 
 # data loader
 BATCH_SIZE = 16
-FRONT_PAD = True
+FRONT_PAD = False
 
 # training defaults
 N_EPOCHS = 100
-MAX_N_STEPS = 100000 # maximum number of steps
-MAX_N_VALID_STEPS = 2000 # number of steps between each validation
+MAX_N_STEPS = 100000 # maximum number of steps in training phase
+MAX_VALID_FREQUENCY = 5000 # maximum number of steps between each validation step
+MAX_N_VALID_STEPS = 2000 # maximum number of steps in validation phase
 EARLY_STOPPING_TOLERANCE = 10
 LEARNING_RATE = 0.0005
 WEIGHT_DECAY = 0.1 # alternatively, 0.01
@@ -260,9 +266,6 @@ EMOTION_ID_TO_EMOTION = inverse_dict(d = EMOTION_TO_EMOTION_ID)
 INDEX_TO_EMOTION = inverse_dict(d = EMOTION_TO_INDEX)
 INDEX_TO_EMOTION_ID = inverse_dict(d = EMOTION_ID_TO_INDEX)
 EMOTION_INDEXER = EMOTION_ID_TO_INDEX
-
-# number of emotions per bar
-N_OUTPUTS_PER_INPUT_BAR_BY_TASK[EMOTION_DIR_NAME] = 1 # because 1 emotion is predicted for each input bar (and later pooled across the song)
 
 # number of emotion classes
 N_EMOTION_CLASSES = len(EMOTIONS)
@@ -343,44 +346,6 @@ CHORDS32 = [
     "G:min", "G:min(11)", "G:min(9)", "G:min11", 
     "G:min13", "G:min6", "G:min6(9)", "G:min7", "G:min9", "G:minmaj7", "G:sus2", "G:sus4", "G:sus4(b7)", "G:sus4(b7,9)", 
     NO_CHORD_SYMBOL]
-# CHORDS32 = [
-#     "A:11", "A:13", "A:7", "A:7(#9)", "A:9", "A:aug", "A:dim", "A:dim7", "A:hdim7", "A:maj", "A:maj(11)", "A:maj(9)", 
-#     "A:maj13", "A:maj6", "A:maj6(9)", "A:maj7", "A:maj9", "A:maj9(11)", "A:min", "A:min(11)", "A:min(9)", "A:min11", 
-#     "A:min13", "A:min6", "A:min6(9)", "A:min7", "A:min9", "A:minmaj7", "A:sus2", "A:sus4", "A:sus4(b7)", "A:sus4(b7,9)",
-#     "Ab:11", "Ab:13", "Ab:7", "Ab:7(#9)", "Ab:9", "Ab:aug", "Ab:dim", "Ab:dim7", "Ab:hdim7", "Ab:maj", "Ab:maj(11)", "Ab:maj(9)", 
-#     "Ab:maj13", "Ab:maj6", "Ab:maj6(9)", "Ab:maj7", "Ab:maj9", "Ab:maj9(11)", "Ab:min", "Ab:min(11)", "Ab:min(9)", "Ab:min11", 
-#     "Ab:min13", "Ab:min6", "Ab:min6(9)", "Ab:min7", "Ab:min9", "Ab:minmaj7", "Ab:sus2", "Ab:sus4", "Ab:sus4(b7)", "Ab:sus4(b7,9)",
-#     "B:11", "B:13", "B:7", "B:7(#9)", "B:9", "B:aug", "B:dim", "B:dim7", "B:hdim7", "B:maj", "B:maj(11)", "B:maj(9)",
-#     "B:maj13", "B:maj6", "B:maj6(9)", "B:maj7", "B:maj9", "B:maj9(11)", "B:min", "B:min(11)", "B:min(9)", "B:min11",
-#     "B:min13", "B:min6", "B:min6(9)", "B:min7", "B:min9", "B:minmaj7", "B:sus2", "B:sus4", "B:sus4(b7)", "B:sus4(b7,9)",
-#     "Bb:11", "Bb:13", "Bb:7", "Bb:7(#9)", "Bb:9", "Bb:aug", "Bb:dim", "Bb:dim7", "Bb:hdim7", "Bb:maj", "Bb:maj(11)", "Bb:maj(9)", 
-#     "Bb:maj13", "Bb:maj6", "Bb:maj6(9)", "Bb:maj7", "Bb:maj9", "Bb:maj9(11)", "Bb:min", "Bb:min(11)", "Bb:min(9)", "Bb:min11", 
-#     "Bb:min13", "Bb:min6", "Bb:min6(9)", "Bb:min7", "Bb:min9", "Bb:minmaj7", "Bb:sus2", "Bb:sus4", "Bb:sus4(b7)", "Bb:sus4(b7,9)",
-#     "C#:11", "C#:13", "C#:7", "C#:7(#9)", "C#:9", "C#:aug", "C#:dim", "C#:dim7", "C#:hdim7", "C#:maj", "C#:maj(11)", "C#:maj(9)", 
-#     "C#:maj13", "C#:maj6", "C#:maj6(9)", "C#:maj7", "C#:maj9", "C#:maj9(11)", "C#:min", "C#:min(11)", "C#:min(9)", "C#:min11", 
-#     "C#:min13", "C#:min6", "C#:min6(9)", "C#:min7", "C#:min9", "C#:minmaj7", "C#:sus2", "C#:sus4", "C#:sus4(b7)", "C#:sus4(b7,9)",
-#     "C:11", "C:13", "C:7", "C:7(#9)", "C:9", "C:aug", "C:dim", "C:dim7", "C:hdim7", "C:maj", "C:maj(11)", "C:maj(9)", 
-#     "C:maj13", "C:maj6", "C:maj6(9)", "C:maj7", "C:maj9", "C:maj9(11)", "C:min", "C:min(11)", "C:min(9)", "C:min11", 
-#     "C:min13", "C:min6", "C:min6(9)", "C:min7", "C:min9", "C:minmaj7", "C:sus2", "C:sus4", "C:sus4(b7)", "C:sus4(b7,9)",
-#     "D:11", "D:13", "D:7", "D:7(#9)", "D:9", "D:aug", "D:dim", "D:dim7", "D:hdim7", "D:maj", "D:maj(11)", "D:maj(9)", 
-#     "D:maj13", "D:maj6", "D:maj6(9)", "D:maj7", "D:maj9", "D:maj9(11)", "D:min", "D:min(11)", "D:min(9)", "D:min11", 
-#     "D:min13", "D:min6", "D:min6(9)", "D:min7", "D:min9", "D:minmaj7", "D:sus2", "D:sus4", "D:sus4(b7)", "D:sus4(b7,9)",
-#     "E:11", "E:13", "E:7", "E:7(#9)", "E:9", "E:aug", "E:dim", "E:dim7", "E:hdim7", "E:maj", "E:maj(11)", "E:maj(9)", 
-#     "E:maj13", "E:maj6", "E:maj6(9)", "E:maj7", "E:maj9", "E:maj9(11)", "E:min", "E:min(11)", "E:min(9)", "E:min11", 
-#     "E:min13", "E:min6", "E:min6(9)", "E:min7", "E:min9", "E:minmaj7", "E:sus2", "E:sus4", "E:sus4(b7)", "E:sus4(b7,9)",
-#     "Eb:11", "Eb:13", "Eb:7", "Eb:7(#9)", "Eb:9", "Eb:aug", "Eb:dim", "Eb:dim7", "Eb:hdim7", "Eb:maj", "Eb:maj(11)", "Eb:maj(9)", 
-#     "Eb:maj13", "Eb:maj6", "Eb:maj6(9)", "Eb:maj7", "Eb:maj9", "Eb:maj9(11)", "Eb:min", "Eb:min(11)", "Eb:min(9)", "Eb:min11", 
-#     "Eb:min13", "Eb:min6", "Eb:min6(9)", "Eb:min7", "Eb:min9", "Eb:minmaj7", "Eb:sus2", "Eb:sus4", "Eb:sus4(b7)", "Eb:sus4(b7,9)",
-#     "F#:11", "F#:13", "F#:7", "F#:7(#9)", "F#:9", "F#:aug", "F#:dim", "F#:dim7", "F#:hdim7", "F#:maj", "F#:maj(11)", "F#:maj(9)", 
-#     "F#:maj13", "F#:maj6", "F#:maj6(9)", "F#:maj7", "F#:maj9", "F#:maj9(11)", "F#:min", "F#:min(11)", "F#:min(9)", "F#:min11", 
-#     "F#:min13", "F#:min6", "F#:min6(9)", "F#:min7", "F#:min9", "F#:minmaj7", "F#:sus2", "F#:sus4", "F#:sus4(b7)", "F#:sus4(b7,9)",
-#     "F:11", "F:13", "F:7", "F:7(#9)", "F:9", "F:aug", "F:dim", "F:dim7", "F:hdim7", "F:maj", "F:maj(11)", "F:maj(9)", 
-#     "F:maj13", "F:maj6", "F:maj6(9)", "F:maj7", "F:maj9", "F:maj9(11)", "F:min", "F:min(11)", "F:min(9)", "F:min11", 
-#     "F:min13", "F:min6", "F:min6(9)", "F:min7", "F:min9", "F:minmaj7", "F:sus2", "F:sus4", "F:sus4(b7)", "F:sus4(b7,9)",
-#     "G:11", "G:13", "G:7", "G:7(#9)", "G:9", "G:aug", "G:dim", "G:dim7", "G:hdim7", "G:maj", "G:maj(11)", "G:maj(9)", 
-#     "G:maj13", "G:maj6", "G:maj6(9)", "G:maj7", "G:maj9", "G:maj9(11)", "G:min", "G:min(11)", "G:min(9)", "G:min11", 
-#     "G:min13", "G:min6", "G:min6(9)", "G:min7", "G:min9", "G:minmaj7", "G:sus2", "G:sus4", "G:sus4(b7)", "G:sus4(b7,9)",
-#     NO_CHORD_SYMBOL]
 CHORD11_TO_INDEX = {chord: i for i, chord in enumerate(CHORDS11)}
 INDEX_TO_CHORD11 = inverse_dict(d = CHORD11_TO_INDEX)
 CHORD32_TO_INDEX = {chord: i for i, chord in enumerate(CHORDS32)}
@@ -423,9 +388,6 @@ INDEX_TO_MELODY = inverse_dict(d = MELODY_TO_INDEX)
 INDEX_TO_MELODY_ID = inverse_dict(d = MELODY_ID_TO_INDEX)
 MELODY_INDEXER = MELODY_ID_TO_INDEX
 
-# number of melodies per bar
-N_OUTPUTS_PER_INPUT_BAR_BY_TASK[MELODY_DIR_NAME] = 1 # because 1 melody is predicted for each input bar
-
 # number of melody classes
 N_MELODY_CLASSES = len(MELODIES)
 
@@ -442,6 +404,7 @@ VOCABULARY_SIZE_BY_TASK[MELODY_DIR_NAME] = len(MELODY_REMI_VOCABULARY)
 
 # maximum song length (in bars) for melody data
 MAX_SEQ_LEN_BY_TASK[MELODY_DIR_NAME] = 1 # must be 1, since this is a note-by-note classification task
+TOKEN_MAX_SEQ_LEN_BY_TASK[MELODY_DIR_NAME] = 3 # 3 events for eatch sample in a batch
 
 # mapping name(s) for melody
 JINGYUE_MELODY_MAPPING_DIR_NAME = "data_events"
@@ -451,6 +414,38 @@ JINGYUE_DIR_BY_TASK[MELODY_DIR_NAME] = f"{JINGYUE_DIR}/POP909_melody_classificat
 # melody evaluation output columns
 EVALUATION_LOSS_OUTPUT_COLUMNS_BY_TASK[MELODY_DIR_NAME] = EVALUATION_LOSS_OUTPUT_COLUMNS
 EVALUATION_ACCURACY_OUTPUT_COLUMNS_BY_TASK[MELODY_DIR_NAME] = EVALUATION_ACCURACY_OUTPUT_COLUMNS
+
+##################################################
+
+
+# MELODY TRANSFORMER CONSTANTS
+##################################################
+
+# mappings
+MELODY_TRANSFORMER_INDEXER = MELODY_ID_TO_INDEX
+
+# number of melody classes
+N_MELODY_TRANSFORMER_CLASSES = len(MELODIES) + 1 # add 1 for the no-class option
+
+# remi-related stuff
+MELODY_TRANSFORMER_BOS_TOKEN = "BOS"
+MELODY_TRANSFORMER_EOS_TOKEN = "EOS"
+MELODY_TRANSFORMER_EVENTS = [f"{MELODY_TRANSFORMER_BOS_TOKEN}_None", f"{MELODY_TRANSFORMER_EOS_TOKEN}_None", "Bar_None"] + [f"{MELODY_CLASS_WORD_TYPE}_{i + 1}" for i in range(len(MELODIES))] + [f"Time_Signature_{time_signature}" for time_signature in ("2/2", "2/4", "3/4", "3/8", "4/4", "6/8")] + list(MELODY_REMI_VOCABULARY.keys())
+MELODY_TRANSFORMER_REMI_VOCABULARY = {event: i for i, event in enumerate(MELODY_TRANSFORMER_EVENTS)}
+VOCABULARY_SIZE_BY_TASK[MELODY_TRANSFORMER_DIR_NAME] = len(MELODY_TRANSFORMER_REMI_VOCABULARY)
+
+# maximum song length (in bars) for melody data
+MELODY_TRANSFORMER_CLIP_LENGTH = 16 # number of bars in a clip
+MAX_SEQ_LEN_BY_TASK[MELODY_TRANSFORMER_DIR_NAME] = MELODY_TRANSFORMER_CLIP_LENGTH
+TOKEN_MAX_SEQ_LEN_BY_TASK[MELODY_TRANSFORMER_DIR_NAME] = 3858 # maximum number of events in a clip
+
+# mapping name(s) for melody
+MAPPING_NAMES_BY_TASK[MELODY_TRANSFORMER_DIR_NAME] = [MELODY_TRANSFORMER_DIR_NAME]
+JINGYUE_DIR_BY_TASK[MELODY_TRANSFORMER_DIR_NAME] = JINGYUE_DIR_BY_TASK[MELODY_DIR_NAME]
+
+# melody evaluation output columns
+EVALUATION_LOSS_OUTPUT_COLUMNS_BY_TASK[MELODY_TRANSFORMER_DIR_NAME] = EVALUATION_LOSS_OUTPUT_COLUMNS
+EVALUATION_ACCURACY_OUTPUT_COLUMNS_BY_TASK[MELODY_TRANSFORMER_DIR_NAME] = EVALUATION_ACCURACY_OUTPUT_COLUMNS
 
 ##################################################
 
@@ -518,6 +513,8 @@ if __name__ == "__main__":
 
     # interpret arguments
     tasks = ALL_TASKS if (args.task is None) else [args.task]
+    tasks = list(map(lambda task: MELODY_DIR_NAME if task == MELODY_TRANSFORMER_DIR_NAME else task, tasks)) # replace melody tranformer with just melody
+    tasks = unique(l = tasks)
     
     # set up logging
     logging.basicConfig(level = logging.INFO, format = "%(message)s")
@@ -548,10 +545,13 @@ if __name__ == "__main__":
 
         # create dataset
         logging.info("* Dataset:")
-        logging.info(join_arguments(args = [
-            f"python {SOFTWARE_DIR}/dataset.py", 
-            f"--task {task}",
-        ]))
+        def log_dataset_command_string():
+            """Helper function to log the dataset command string."""
+            logging.info(join_arguments(args = [
+                f"python {SOFTWARE_DIR}/dataset.py", 
+                f"--task {task}",
+            ]))
+        log_dataset_command_string()
         
         # separator line
         logging.info(MINOR_SEPARATOR_LINE)
@@ -580,19 +580,36 @@ if __name__ == "__main__":
             for use_prebottleneck_latents in (False, True):
                 log_train_command_string(use_prebottleneck_latents = use_prebottleneck_latents, prepool = prepool, use_transformer = False)
         for use_prebottleneck_latents in (False, True):
-            log_train_command_string(use_prebottleneck_latents = use_prebottleneck_latents, prepool = False, use_transformer = True)
-        del log_train_command_string # free up memory
+            log_train_command_string(use_prebottleneck_latents = use_prebottleneck_latents, prepool = False, use_transformer = True)            
         
         # separator line
         logging.info(MINOR_SEPARATOR_LINE)
 
         # evaluate
         logging.info("* Evaluate:")
-        logging.info(join_arguments(args = [
-            f"python {SOFTWARE_DIR}/evaluate.py",
-            f"--task {task}",
-            f"--gpu {DEFAULT_GPU}",
-        ]))
+        def log_evaluate_command_string():
+            """Helper function to log the evaluate command string."""
+            logging.info(join_arguments(args = [
+                f"python {SOFTWARE_DIR}/evaluate.py",
+                f"--task {task}",
+                f"--gpu {DEFAULT_GPU}",
+            ]))
+        log_evaluate_command_string()
+
+        # special cases
+        if task == MELODY_DIR_NAME:
+            logging.info(MINOR_SEPARATOR_LINE)
+            task = MELODY_TRANSFORMER_DIR_NAME # set task to melody transfrmer
+            logging.info("* Special Melody Transformer:")
+            log_dataset_command_string()
+            logging.info(join_arguments(args = [
+                f"python {SOFTWARE_DIR}/train.py",
+                f"--task {task}",
+                "--use_wandb",
+                f"--gpu {DEFAULT_GPU}",
+                "--model_name melody_transformer",
+            ]))
+            log_evaluate_command_string()
                 
         # end margin
         logging.info(MAJOR_SEPARATOR_LINE)

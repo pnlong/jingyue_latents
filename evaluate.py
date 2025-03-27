@@ -27,7 +27,8 @@ import sys
 sys.path.insert(0, dirname(realpath(__file__)))
 
 from dataset import get_dataset
-from model import get_model, get_predictions_from_outputs
+from model import get_model
+from train import evaluate_model
 import utils
 
 ##################################################
@@ -157,7 +158,7 @@ if __name__ == "__main__":
             del train_args_filepath
 
             # load dataset and data loader
-            dataset = get_dataset(task = task, directory = train_args["data_dir"], paths = args.paths_test, mappings_path = train_args["mappings_path"], pool = train_args["prepool"], use_prebottleneck_latents = train_args["use_prebottleneck_latents"])
+            dataset = get_dataset(task = task, directory = train_args["data_dir"], paths = args.paths_test, mappings_path = train_args["mappings_path"], pool = train_args["prepool"])
             data_loader = torch.utils.data.DataLoader(
                 dataset = dataset,
                 batch_size = args.batch_size,
@@ -200,27 +201,18 @@ if __name__ == "__main__":
                         del paths, incomplete_paths_in_batch # free up memory
                         continue
 
-                    # proceed with calculations
-                    inputs, labels, mask = batch["seq"], batch["label"], batch["mask"]
-                    inputs, labels, mask = inputs.to(device), labels.to(device), mask.to(device) # move to device
-                    current_batch_size = len(labels)
+                    # evaluate
+                    current_batch_size = len(paths)
                     model_column = utils.rep(x = model_column_value, times = current_batch_size)
-
-                    # get tokens if any
-                    tokens = batch["token"]
-                    if tokens is not None:
-                        tokens = tokens.to(device) # move to device
-
-                    # get outputs
-                    outputs = model(input = inputs, mask = mask, tokens = tokens)
-
-                    # compute the loss and its gradients
-                    loss = loss_fn(outputs, labels)
-                    loss = float(loss) # float(loss) because it has a gradient attribute
-
-                    # compute accuracy
-                    predictions = get_predictions_from_outputs(outputs = outputs)
-                    correctness = (predictions == labels)
+                    loss, correctness, predictions = evaluate_model(
+                        task = args.task,
+                        model = model,
+                        batch = batch,
+                        loss_fn = loss_fn,
+                        device = device,
+                        update_parameters = False,
+                        return_predictions = True,
+                    )
 
                     ##################################################
 
@@ -249,7 +241,7 @@ if __name__ == "__main__":
                             (
                                 model_column, # model
                                 paths, # path
-                                labels.cpu().tolist(), # expected
+                                batch["label"].tolist(), # expected
                                 predictions.cpu().tolist(), # actual
                                 correctness.cpu().tolist(), # is correct
                             ))),
@@ -259,7 +251,7 @@ if __name__ == "__main__":
                     accuracy_batch_output.to_csv(path_or_buf = accuracy_output_filepath, sep = ",", na_rep = utils.NA_STRING, header = False, index = False, mode = "a")
 
                     # free up memory
-                    del paths, incomplete_paths_in_batch, inputs, labels, mask, current_batch_size, model_column, outputs, loss, predictions, correctness, loss_batch_output, accuracy_batch_output
+                    del paths, incomplete_paths_in_batch, current_batch_size, model_column, loss, predictions, correctness, loss_batch_output, accuracy_batch_output
 
                     ##################################################
 

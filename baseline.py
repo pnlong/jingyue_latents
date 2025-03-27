@@ -192,8 +192,22 @@ if __name__ == "__main__":
     # MELODY
     ##################################################
 
-    elif args.task == utils.MELODY_DIR_NAME:
-        pass
+    elif args.task == utils.MELODY_DIR_NAME or args.task == utils.MELODY_TRANSFORMER_DIR_NAME:
+
+        # relevant imports
+        import pandas as pd
+
+        # copying table from https://arxiv.org/pdf/2107.05223
+        data = pd.DataFrame(data = {
+            "token": utils.rep(x = "REMI", times = 4) + utils.rep(x = "CP", times = 4) + ["OctupleMIDI"],
+            "model": (["CNN (Lee et al., 2020)", "RNN (Z. Lin et al., 2017)", "Our model (score)", "Our model (performance)"] * 2) + ["MusicBERT (Zeng et al., 2021)"],
+            utils.ACCURACY_STATISTIC_NAME: [None, 89.96, 90.97, 89.23, None, 88.66, 96.15, 95.83, None],
+        })
+
+        # log info
+        logging.info("Extracted from Table 2 of \"BERT-like Pre-training for Symbolic Piano Music Classification Tasks\" (Chou et al., 2024).")
+        logging.info("Paper available at https://arxiv.org/abs/2107.05223.\n")
+        logging.info(utils.prettify_table(df = data, column_widths = [15, 35, 10]))
         
     ##################################################
 

@@ -23,6 +23,7 @@ import torch
 import torch.utils.data
 from tqdm import tqdm
 import warnings
+from typing import Callable
 warnings.simplefilter(action = "ignore", category = FutureWarning)
 
 from os.path import dirname, realpath
@@ -32,6 +33,72 @@ sys.path.insert(0, dirname(realpath(__file__)))
 from dataset import get_dataset
 from model import get_model, get_predictions_from_outputs
 import utils
+
+##################################################
+
+
+# BATCH EVALUATION FUNCTION
+##################################################
+
+def evaluate_model(
+        task: str,
+        model: torch.nn.Module,
+        batch: dict,
+        loss_fn: Callable,
+        device: torch.device = torch.device("cpu"),
+        update_parameters: bool = False,
+        return_predictions: bool = False, # return labels and predictions tensors
+        optimizer: torch.optim.Optimizer = None,
+    ):
+    """Evaluate the model, updating parameters if specified."""
+
+    # get input and output pair
+    inputs, labels, mask = batch["seq"], batch["label"], batch["mask"]
+    inputs, labels, mask = inputs.to(device), labels.to(device), mask.to(device) # move to device
+
+    # get tokens if any
+    tokens = batch["token"]
+    if tokens is not None:
+        tokens = tokens.to(device) # move to device
+
+    # get bar positions if any
+    bar_positions = batch["bar_position"]
+    if bar_positions is not None:
+        bar_positions = bar_positions.to(device)
+
+    # zero gradients
+    if update_parameters:
+        optimizer.zero_grad()
+
+    # get outputs
+    if task == utils.MELODY_TRANSFORMER_DIR_NAME:
+        outputs = model(enc_inp = tokens, inp_bar_pos = bar_positions, rvq_latent = inputs, padding_mask = mask)
+        # outputs = outputs.reshape(-1, outputs.shape[-1]) # reshape to 2d
+    else:
+        outputs = model(input = inputs, mask = mask, tokens = tokens)
+
+    # compute the loss and its gradients
+    loss = loss_fn(outputs, labels)
+    if update_parameters:
+        loss.backward()
+    loss = float(loss) # float(loss) because it has a gradient attribute
+
+    # adjust learning weights
+    if update_parameters:
+        optimizer.step() # update parameters
+
+    # compute number correct in batch
+    predictions = get_predictions_from_outputs(outputs = outputs)
+    correctness = (predictions == labels)
+
+    # release GPU memory right away
+    del inputs, labels, mask, outputs, tokens, bar_positions
+
+    # return tuple
+    if return_predictions:
+        return loss, correctness, predictions
+    else:
+        return loss, correctness
 
 ##################################################
 
@@ -54,7 +121,8 @@ def parse_args(args = None, namespace = None):
     parser.add_argument("-bs", "--batch_size", default = utils.BATCH_SIZE, type = int, help = "Batch size for data loader")
     parser.add_argument("--epochs", default = utils.N_EPOCHS, type = int, help = "Number of epochs")
     parser.add_argument("--steps", default = None, type = int, help = "Number of steps")
-    parser.add_argument("--valid_steps", default = None, type = int, help = "Validation frequency")
+    parser.add_argument("--valid_frequency", default = None, type = int, help = "Validation frequency")
+    parser.add_argument("--valid_steps", default = None, type = int, help = "Number of validation steps")
     parser.add_argument("--early_stopping", action = "store_true", help = "Whether to use early stopping")
     parser.add_argument("--early_stopping_tolerance", default = utils.EARLY_STOPPING_TOLERANCE, type = int, help = "Number of extra validation rounds before early stopping")
     parser.add_argument("-wd", "--weight_decay", default = utils.WEIGHT_DECAY, type = float, help = "Weight decay for L2 regularization")
@@ -117,8 +185,8 @@ if __name__ == "__main__":
     # create the dataset and data loader
     print(f"Creating the data loader...")
     dataset = {
-        utils.TRAIN_PARTITION_NAME: get_dataset(task = task, directory = args.data_dir, paths = args.paths_train, mappings_path = args.mappings_path, pool = args.prepool, use_prebottleneck_latents = args.use_prebottleneck_latents),
-        utils.VALID_PARTITION_NAME: get_dataset(task = task, directory = args.data_dir, paths = args.paths_valid, mappings_path = args.mappings_path, pool = args.prepool, use_prebottleneck_latents = args.use_prebottleneck_latents),
+        utils.TRAIN_PARTITION_NAME: get_dataset(task = task, directory = args.data_dir, paths = args.paths_train, mappings_path = args.mappings_path, pool = args.prepool),
+        utils.VALID_PARTITION_NAME: get_dataset(task = task, directory = args.data_dir, paths = args.paths_valid, mappings_path = args.mappings_path, pool = args.prepool),
     }
     data_loader = {
         utils.TRAIN_PARTITION_NAME: torch.utils.data.DataLoader(dataset = dataset[utils.TRAIN_PARTITION_NAME], batch_size = args.batch_size, shuffle = True, num_workers = args.jobs, collate_fn = dataset[utils.TRAIN_PARTITION_NAME].collate),
@@ -235,15 +303,21 @@ if __name__ == "__main__":
     # determine number of steps
     if args.steps is None: # infer number of steps if not provided
         args.steps = args.epochs * len(data_loader[utils.TRAIN_PARTITION_NAME])
-        # args.steps = min(args.steps, utils.MAX_N_STEPS) # ensure we aren't doing too many steps
+        args.steps = min(args.steps, utils.MAX_N_STEPS) # ensure we aren't doing too many steps
 
-    # determine number of validation steps
+    # determine validation frequency
+    if args.valid_frequency is None:
+        args.valid_frequency = len(data_loader[utils.TRAIN_PARTITION_NAME])
+        args.valid_frequency = min(args.valid_frequency, utils.MAX_VALID_FREQUENCY) # ensure we aren't doing too many validation steps
+
+    # determine number of steps in validation partition
     if args.valid_steps is None:
-        args.valid_steps = len(data_loader[utils.TRAIN_PARTITION_NAME])
-        # args.valid_steps = min(args.valid_steps, utils.MAX_N_VALID_STEPS) # ensure we aren't doing too many validation steps
+        args.valid_steps = len(data_loader[utils.VALID_PARTITION_NAME])
+        args.valid_steps = min(args.valid_steps, utils.MAX_N_VALID_STEPS)
 
     # iterate for the specified number of steps
     train_iter = iter(data_loader[utils.TRAIN_PARTITION_NAME]) # training iterator
+    valid_iter = iter(data_loader[utils.VALID_PARTITION_NAME]) # validation iterator
     while step < args.steps:
 
         # to store loss/accuracy values
@@ -258,7 +332,7 @@ if __name__ == "__main__":
         # put model into training mode
         model.train()
         count = 0 # count number of songs
-        for batch in (progress_bar := tqdm(iterable = range(args.valid_steps), desc = "Training")):
+        for batch in (progress_bar := tqdm(iterable = range(args.valid_frequency), desc = "Training")):
 
             # get batch
             try:
@@ -267,33 +341,13 @@ if __name__ == "__main__":
                 train_iter = iter(data_loader[utils.TRAIN_PARTITION_NAME]) # reset training iterator
                 batch = next(train_iter)
 
-            # get input and output pair
-            inputs, labels, mask = batch["seq"], batch["label"], batch["mask"]
-            inputs, labels, mask = inputs.to(device), labels.to(device), mask.to(device) # move to device
-            current_batch_size = len(labels)
-
-            # get tokens if any
-            tokens = batch["token"]
-            if tokens is not None:
-                tokens = tokens.to(device) # move to device
-
-            # zero gradients
-            optimizer.zero_grad()
-
-            # get outputs
-            outputs = model(input = inputs, mask = mask, tokens = tokens)
-
-            # compute the loss and its gradients
-            loss = loss_fn(outputs, labels)
-            loss.backward()
-            loss = float(loss) # float(loss) because it has a gradient attribute
-
-            # adjust learning weights
-            optimizer.step() # update parameters
-
-            # compute accuracy
-            predictions = get_predictions_from_outputs(outputs = outputs)
-            n_correct_in_batch = int(sum(predictions == labels))
+            # evaluate
+            current_batch_size = len(batch["label"])
+            loss, correctness = evaluate_model(
+                task = args.task, model = model, batch = batch, loss_fn = loss_fn, optimizer = optimizer, device = device,
+                update_parameters = True,
+            )
+            n_correct_in_batch = int(sum(correctness))
             accuracy = 100 * (n_correct_in_batch / current_batch_size)
                         
             # set progress bar
@@ -316,8 +370,8 @@ if __name__ == "__main__":
             # increment step
             step += 1
 
-            # release GPU memory right away
-            del inputs, labels, mask, outputs, loss, predictions, n_correct_in_batch, accuracy
+            # free up memory
+            del loss, n_correct_in_batch, accuracy
 
         # compute average loss/accuracy across batches for output data tables
         statistics[utils.LOSS_STATISTIC_NAME][utils.TRAIN_PARTITION_NAME] /= count
@@ -338,28 +392,22 @@ if __name__ == "__main__":
         with torch.no_grad():
             
             # iterate through validation data loader
-            for batch in (progress_bar := tqdm(iterable = data_loader[utils.VALID_PARTITION_NAME], desc = "Validating")):
+            for batch in (progress_bar := tqdm(iterable = range(args.valid_steps), desc = "Validating")):
 
-                # get input and output pair
-                inputs, labels, mask = batch["seq"], batch["label"], batch["mask"]
-                inputs, labels, mask = inputs.to(device), labels.to(device), mask.to(device) # move to device
-                current_batch_size = len(labels)
+                # get batch
+                try:
+                    batch = next(valid_iter)
+                except (StopIteration):
+                    valid_iter = iter(data_loader[utils.VALID_PARTITION_NAME]) # reset training iterator
+                    batch = next(valid_iter)
 
-                # get tokens if any
-                tokens = batch["token"]
-                if tokens is not None:
-                    tokens = tokens.to(device) # move to device
-
-                # get outputs
-                outputs = model(input = inputs, mask = mask, tokens = tokens)
-
-                # compute the loss and its gradients
-                loss = loss_fn(outputs, labels)
-                loss = float(loss) # float(loss) because it has a gradient attribute
-
-                # compute accuracy
-                predictions = get_predictions_from_outputs(outputs = outputs)
-                n_correct_in_batch = int(sum(predictions == labels))
+                # evaluate
+                current_batch_size = len(batch["label"])
+                loss, correctness = evaluate_model(
+                    task = args.task, model = model, batch = batch, loss_fn = loss_fn, device = device,
+                    update_parameters = False,
+                )
+                n_correct_in_batch = int(sum(correctness))
                 accuracy = 100 * (n_correct_in_batch / current_batch_size)
                         
                 # set progress bar
@@ -372,8 +420,8 @@ if __name__ == "__main__":
                 statistics[utils.LOSS_STATISTIC_NAME][utils.VALID_PARTITION_NAME] += loss
                 statistics[utils.ACCURACY_STATISTIC_NAME][utils.VALID_PARTITION_NAME] += n_correct_in_batch
 
-                # release GPU memory right away
-                del inputs, labels, mask, outputs, loss, predictions, n_correct_in_batch, accuracy
+                # free up memory
+                del loss, n_correct_in_batch, accuracy
 
         # compute average loss/accuracy across batches for output data tables (and WANDB if applicable)
         statistics[utils.LOSS_STATISTIC_NAME][utils.VALID_PARTITION_NAME] /= count
