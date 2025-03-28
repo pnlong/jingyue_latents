@@ -23,6 +23,7 @@ import torch
 import torch.utils.data
 from tqdm import tqdm
 import warnings
+from typing import Callable
 warnings.simplefilter(action = "ignore", category = FutureWarning)
 
 from os.path import dirname, realpath
@@ -32,6 +33,76 @@ sys.path.insert(0, dirname(realpath(__file__)))
 from dataset import get_dataset
 from model import get_model, get_predictions_from_outputs
 import utils
+
+##################################################
+
+
+# BATCH EVALUATION FUNCTION
+##################################################
+
+def evaluate_model(
+        task: str,
+        model: torch.nn.Module,
+        batch: dict,
+        loss_fn: Callable,
+        device: torch.device = torch.device("cpu"),
+        update_parameters: bool = False,
+        return_predictions: bool = False, # return labels and predictions tensors
+        optimizer: torch.optim.Optimizer = None,
+    ):
+    """Evaluate the model, updating parameters if specified."""
+
+    # get input and output pair
+    inputs, labels, mask = batch["seq"], batch["label"], batch["mask"]
+    inputs, labels, mask = inputs.to(device), labels.to(device), mask.to(device) # move to device
+
+    # get tokens if any
+    tokens = batch["token"]
+    if tokens is not None:
+        tokens = tokens.to(device) # move to device
+
+    # get bar positions if any
+    bar_positions = batch["bar_position"]
+    if bar_positions is not None:
+        bar_positions = bar_positions.to(device)
+
+    # zero gradients
+    if update_parameters:
+        optimizer.zero_grad()
+
+    # get outputs
+    if task == utils.MELODY_TRANSFORMER_DIR_NAME:
+        outputs = model(enc_inp = tokens, inp_bar_pos = bar_positions, rvq_latent = inputs, padding_mask = mask)
+        loss = model.compute_loss(outputs.reshape(tokens.shape[0], tokens.shape[1], -1), labels)
+    else:
+        outputs = model(input = inputs, mask = mask, tokens = tokens)
+        loss = loss_fn(outputs, labels)
+
+    # back propagate
+    # loss = loss_fn(outputs, labels)
+    if update_parameters:
+        loss.backward()
+    loss = float(loss) # float(loss) because it has a gradient attribute
+
+    # adjust learning weights
+    if update_parameters:
+        optimizer.step() # update parameters
+
+    # compute number correct in batch
+    predictions = get_predictions_from_outputs(outputs = outputs)
+    if task == utils.MELODY_TRANSFORMER_DIR_NAME:
+        predictions = predictions[labels != utils.NON_TRACK_EVENT_VALUE]
+        labels = labels[labels != utils.NON_TRACK_EVENT_VALUE]
+    correctness = (predictions == labels)
+
+    # release GPU memory right away
+    del inputs, labels, mask, outputs, tokens, bar_positions
+
+    # return tuple
+    if return_predictions:
+        return loss, correctness, predictions
+    else:
+        return loss, correctness
 
 ##################################################
 
@@ -54,7 +125,7 @@ def parse_args(args = None, namespace = None):
     parser.add_argument("-bs", "--batch_size", default = utils.BATCH_SIZE, type = int, help = "Batch size for data loader")
     parser.add_argument("--epochs", default = utils.N_EPOCHS, type = int, help = "Number of epochs")
     parser.add_argument("--steps", default = None, type = int, help = "Number of steps")
-    parser.add_argument("--valid_frequency", default = None, type = int, help = "Validation frequency")
+    parser.add_argument("--valid_frequency", default = None, type = int, help = "Validation frequency (after how many steps should the model be validated?)")
     parser.add_argument("--valid_steps", default = None, type = int, help = "Number of validation steps")
     parser.add_argument("--early_stopping", action = "store_true", help = "Whether to use early stopping")
     parser.add_argument("--early_stopping_tolerance", default = utils.EARLY_STOPPING_TOLERANCE, type = int, help = "Number of extra validation rounds before early stopping")
@@ -273,42 +344,14 @@ if __name__ == "__main__":
             except (StopIteration):
                 train_iter = iter(data_loader[utils.TRAIN_PARTITION_NAME]) # reset training iterator
                 batch = next(train_iter)
-            current_batch_size = len(batch["label"])
 
-            # get input and output pair
-            inputs, labels, mask = batch["seq"], batch["label"], batch["mask"]
-            inputs, labels, mask = inputs.to(device), labels.to(device), mask.to(device) # move to device
-
-            # get tokens if any
-            tokens = batch["token"]
-            if tokens is not None:
-                tokens = tokens.to(device) # move to device
-
-            # get bar positions if any
-            bar_positions = batch["bar_position"]
-            if bar_positions is not None:
-                bar_positions = bar_positions.to(device)
-
-            # zero gradients
-            optimizer.zero_grad()
-
-            # get outputs
-            if args.task == utils.MELODY_TRANSFORMER_DIR_NAME:
-                outputs = model(enc_inp = tokens, inp_bar_pos = bar_positions, rvq_latent = inputs, padding_mask = mask)
-            else:
-                outputs = model(input = inputs, mask = mask, tokens = tokens)
-
-            # compute the loss and its gradients
-            loss = loss_fn(outputs, labels)
-            loss.backward()
-            loss = float(loss) # float(loss) because it has a gradient attribute
-
-            # adjust learning weights
-            optimizer.step() # update parameters
-
-            # compute number correct in batch
-            predictions = get_predictions_from_outputs(outputs = outputs)
-            n_correct_in_batch = int(sum(predictions == labels))
+            # evaluate
+            loss, correctness = evaluate_model(
+                task = args.task, model = model, batch = batch, loss_fn = loss_fn, optimizer = optimizer, device = device,
+                update_parameters = True,
+            )
+            current_batch_size = len(correctness)
+            n_correct_in_batch = int(sum(correctness))
             accuracy = 100 * (n_correct_in_batch / current_batch_size)
                         
             # set progress bar
@@ -332,7 +375,7 @@ if __name__ == "__main__":
             step += 1
 
             # free up memory
-            del batch, current_batch_size, inputs, labels, mask, tokens, bar_positions, outputs, loss, predictions, n_correct_in_batch, accuracy
+            del loss, n_correct_in_batch, accuracy, current_batch_size, batch
 
         # compute average loss/accuracy across batches for output data tables
         statistics[utils.LOSS_STATISTIC_NAME][utils.TRAIN_PARTITION_NAME] /= count
@@ -351,8 +394,6 @@ if __name__ == "__main__":
         model.eval()
         count = 0 # count number of songs
         with torch.no_grad():
-            
-            # iterate through validation data loader
             for batch in (progress_bar := tqdm(iterable = range(args.valid_steps), desc = "Validating")):
 
                 # get batch
@@ -361,35 +402,14 @@ if __name__ == "__main__":
                 except (StopIteration):
                     valid_iter = iter(data_loader[utils.VALID_PARTITION_NAME]) # reset training iterator
                     batch = next(valid_iter)
-                current_batch_size = len(batch["label"])
 
-                # get input and output pair
-                inputs, labels, mask = batch["seq"], batch["label"], batch["mask"]
-                inputs, labels, mask = inputs.to(device), labels.to(device), mask.to(device) # move to device
-
-                # get tokens if any
-                tokens = batch["token"]
-                if tokens is not None:
-                    tokens = tokens.to(device) # move to device
-
-                # get bar positions if any
-                bar_positions = batch["bar_position"]
-                if bar_positions is not None:
-                    bar_positions = bar_positions.to(device)
-
-                # get outputs
-                if args.task == utils.MELODY_TRANSFORMER_DIR_NAME:
-                    outputs = model(enc_inp = tokens, inp_bar_pos = bar_positions, rvq_latent = inputs, padding_mask = mask)
-                else:
-                    outputs = model(input = inputs, mask = mask, tokens = tokens)
-
-                # compute the loss and its gradients
-                loss = loss_fn(outputs, labels)
-                loss = float(loss) # float(loss) because it has a gradient attribute
-
-                # compute number correct in batch
-                predictions = get_predictions_from_outputs(outputs = outputs)
-                n_correct_in_batch = int(sum(predictions == labels))
+                # evaluate
+                loss, correctness = evaluate_model(
+                    task = args.task, model = model, batch = batch, loss_fn = loss_fn, device = device,
+                    update_parameters = False,
+                )
+                current_batch_size = len(correctness)
+                n_correct_in_batch = int(sum(correctness))
                 accuracy = 100 * (n_correct_in_batch / current_batch_size)
                         
                 # set progress bar
@@ -403,7 +423,7 @@ if __name__ == "__main__":
                 statistics[utils.ACCURACY_STATISTIC_NAME][utils.VALID_PARTITION_NAME] += n_correct_in_batch
 
                 # free up memory
-                del batch, current_batch_size, inputs, labels, mask, tokens, bar_positions, outputs, loss, predictions, n_correct_in_batch, accuracy
+                del loss, n_correct_in_batch, accuracy, current_batch_size, batch
 
         # compute average loss/accuracy across batches for output data tables (and WANDB if applicable)
         statistics[utils.LOSS_STATISTIC_NAME][utils.VALID_PARTITION_NAME] /= count

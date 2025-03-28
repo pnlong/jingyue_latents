@@ -27,7 +27,8 @@ import sys
 sys.path.insert(0, dirname(realpath(__file__)))
 
 from dataset import get_dataset
-from model import get_model, get_predictions_from_outputs
+from model import get_model
+from train import evaluate_model
 import utils
 
 ##################################################
@@ -200,37 +201,32 @@ if __name__ == "__main__":
                         del paths, incomplete_paths_in_batch # free up memory
                         continue
 
-                    # evaluate
-                    current_batch_size = len(paths)
-                    model_column = utils.rep(x = model_column_value, times = current_batch_size)
-                    
-                    # get input and output pair
-                    inputs, labels, mask = batch["seq"], batch["label"], batch["mask"]
-                    inputs, labels, mask = inputs.to(device), labels.to(device), mask.to(device) # move to device
+                    # get labels
+                    labels = batch["label"]
 
-                    # get tokens if any
-                    tokens = batch["token"]
-                    if tokens is not None:
-                        tokens = tokens.to(device) # move to device
+                    # reshape paths to reflect shape of correctness
+                    if len(paths) < len(labels):
+                        paths_per_sample = batch["label"].reshape(len(paths), -1)
+                        paths_per_sample = (paths_per_sample != utils.NON_TRACK_EVENT_VALUE).sum(dim = -1).tolist() if args.task == utils.MELODY_TRANSFOMER_DIR_NAME else utils.rep(x = paths_per_sample.shape[-1], times = len(paths_per_sample))
+                        paths = sum([utils.rep(x = path, times = amount) for path, amount in zip(paths, paths_per_sample)], [])
+                        del paths_per_sample # free up memory
 
-                    # get bar positions if any
-                    bar_positions = batch["bar_position"]
-                    if bar_positions is not None:
-                        bar_positions = bar_positions.to(device)
-
-                    # get outputs
+                    # only extract labels we are interested in
                     if args.task == utils.MELODY_TRANSFORMER_DIR_NAME:
-                        outputs = model(enc_inp = tokens, inp_bar_pos = bar_positions, rvq_latent = inputs, padding_mask = mask)
-                    else:
-                        outputs = model(input = inputs, mask = mask, tokens = tokens)
+                        labels = labels[labels != utils.NON_TRACK_EVENT_VALUE]
 
-                    # compute the loss and its gradients
-                    loss = loss_fn(outputs, labels)
-                    loss = float(loss) # float(loss) because it has a gradient attribute
-
-                    # compute number correct in batch
-                    predictions = get_predictions_from_outputs(outputs = outputs)
-                    correctness = (predictions == labels)
+                    # evaluate
+                    loss, correctness, predictions = evaluate_model(
+                        task = args.task,
+                        model = model,
+                        batch = batch,
+                        loss_fn = loss_fn,
+                        device = device,
+                        update_parameters = False,
+                        return_predictions = True,
+                    )
+                    current_batch_size = len(correctness)
+                    model_column = utils.rep(x = model_column_value, times = current_batch_size)
 
                     ##################################################
 
@@ -259,7 +255,7 @@ if __name__ == "__main__":
                             (
                                 model_column, # model
                                 paths, # path
-                                labels.cpu().tolist(), # expected
+                                labels.tolist(), # expected
                                 predictions.cpu().tolist(), # actual
                                 correctness.cpu().tolist(), # is correct
                             ))),
@@ -269,7 +265,7 @@ if __name__ == "__main__":
                     accuracy_batch_output.to_csv(path_or_buf = accuracy_output_filepath, sep = ",", na_rep = utils.NA_STRING, header = False, index = False, mode = "a")
 
                     # free up memory
-                    del paths, incomplete_paths_in_batch, current_batch_size, model_column, inputs, labels, mask, tokens, bar_positions, outputs, loss, predictions, correctness, loss_batch_output, accuracy_batch_output
+                    del paths, incomplete_paths_in_batch, current_batch_size, model_column, labels, loss, predictions, correctness, loss_batch_output, accuracy_batch_output
 
                     ##################################################
 

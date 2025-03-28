@@ -250,6 +250,7 @@ def parse_args(args = None, namespace = None):
     parser = argparse.ArgumentParser(prog = "Data", description = "Wrangle data.")
     parser.add_argument("-t", "--task", required = True, choices = utils.ALL_TASKS, type = str, help = "Name of task")
     parser.add_argument("-r", "--reset", action = "store_true", help = "Whether or not to recreate files")
+    parser.add_argument("-rp", "--randomize_partitions", action = "store_true", help = "Whether or not to randomize files before partitioning them")
     parser.add_argument("-j", "--jobs", default = int(multiprocessing.cpu_count() / 4), type = int, help = "Number of workers for data loading")
     
     # parse arguments
@@ -328,7 +329,8 @@ if __name__ == "__main__":
         load_pickle(filepath = f"{args.partitions_dir}/test.pkl"), # read in testing file
     ]
     all_stems = sum(stems_by_partition, []) # list of all path stems
-    random.shuffle(all_stems)
+    if args.randomize_partitions:
+        random.shuffle(all_stems)
     n_stems = len(all_stems) # number of stems
     del load_pickle # free up memory
 
