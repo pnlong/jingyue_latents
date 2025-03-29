@@ -102,6 +102,7 @@ class CustomDataset(torch.utils.data.Dataset):
         max_seq_len: int = 1, # maximum sequence length (in bars)
         tokens_max_seq_len: int = 0, # maximum sequence length of tokens, defaults to 0 (no tokens)
         pool: bool = False, # whether to pool (average) the num_bar dimension
+        use_tokens: bool = False, # whether or not to use tokens, regardless if they are available or not
         mask_tokens: bool = False, # whether the mask should be for tokens or for the latents
         labels_are_tokens: bool = False, # whether the labels match tokens
     ):
@@ -112,6 +113,7 @@ class CustomDataset(torch.utils.data.Dataset):
         self.max_seq_len = max_seq_len
         self.tokens_max_seq_len = tokens_max_seq_len
         self.pool = pool
+        self.use_tokens = use_tokens
         self.mask_tokens = mask_tokens
         self.labels_are_tokens = labels_are_tokens
 
@@ -133,8 +135,8 @@ class CustomDataset(torch.utils.data.Dataset):
 
         # load in sequence as tensor, extract tokens if there are any
         seq = torch.load(f = path, weights_only = True)
-        tokens = torch.load(f = tokens_path, weights_only = True).to(utils.TOKEN_TYPE) if exists(tokens_path) else None
-        bar_positions = torch.load(f = bar_positions_path, weights_only = True) if exists(bar_positions_path) else None
+        tokens = torch.load(f = tokens_path, weights_only = True).to(utils.TOKEN_TYPE) if exists(tokens_path) and self.use_tokens else None
+        bar_positions = torch.load(f = bar_positions_path, weights_only = True) if exists(bar_positions_path) and self.use_tokens else None
 
         # pool if necessary
         if self.pool and len(seq.shape) == 2:
@@ -227,7 +229,8 @@ def get_dataset(
     # get the correct label extractor
     max_seq_len = utils.MAX_SEQ_LEN_BY_TASK[task]
     token_max_seq_len = utils.TOKEN_MAX_SEQ_LEN_BY_TASK[task]
-    mask_tokens = (task == utils.MELODY_TRANSFORMER_DIR_NAME) or (task == utils.CHORD_DIR_NAME)
+    use_tokens = (task == utils.MELODY_TRANSFORMER_DIR_NAME) or (task == utils.MELODY_DIR_NAME)
+    mask_tokens = (task == utils.MELODY_TRANSFORMER_DIR_NAME) # or (task == utils.CHORD_DIR_NAME)
     labels_are_tokens = (task == utils.MELODY_TRANSFORMER_DIR_NAME)
     
     # return dataset with relevant arguments
@@ -238,6 +241,7 @@ def get_dataset(
         max_seq_len = max_seq_len,
         tokens_max_seq_len = token_max_seq_len,
         pool = pool,
+        use_tokens = use_tokens,
         mask_tokens = mask_tokens,
         labels_are_tokens = labels_are_tokens,
     )
