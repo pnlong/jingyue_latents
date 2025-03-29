@@ -419,7 +419,7 @@ class MelodyTransformer(nn.Module):
     def compute_loss(self, logits, tgt):
         loss = torch.nn.functional.cross_entropy(
             logits.view(-1, logits.size(-1)), tgt.contiguous().view(-1), 
-            ignore_index = self.n_token - 1, reduction = "mean",
+            ignore_index = 0, reduction = "mean",
         ).float()
         return loss
 
