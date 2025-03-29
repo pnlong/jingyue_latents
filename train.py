@@ -251,7 +251,7 @@ if __name__ == "__main__":
     best_model_filepath = {partition: f"{checkpoints_dir}/best_model.{partition}.pth" for partition in utils.RELEVANT_TRAINING_PARTITIONS}
     if args.resume and exists(best_model_filepath[utils.VALID_PARTITION_NAME]):
         model.load_state_dict(torch.load(f = best_model_filepath[utils.VALID_PARTITION_NAME], weights_only = True))
-        if args.fine_tune and log_hyperparameters:
+        if log_hyperparameters:
             log_model_size()
     else:
         log_model_size()
