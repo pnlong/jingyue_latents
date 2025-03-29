@@ -103,6 +103,7 @@ class CustomDataset(torch.utils.data.Dataset):
         tokens_max_seq_len: int = 0, # maximum sequence length of tokens, defaults to 0 (no tokens)
         pool: bool = False, # whether to pool (average) the num_bar dimension
         mask_tokens: bool = False, # whether the mask should be for tokens or for the latents
+        labels_are_tokens: bool = False, # whether the labels match tokens
     ):
         super().__init__()
         self.directory = directory
@@ -112,6 +113,7 @@ class CustomDataset(torch.utils.data.Dataset):
         self.tokens_max_seq_len = tokens_max_seq_len
         self.pool = pool
         self.mask_tokens = mask_tokens
+        self.labels_are_tokens = labels_are_tokens
 
     # length attribute
     def __len__(self) -> int:
@@ -151,6 +153,7 @@ class CustomDataset(torch.utils.data.Dataset):
             "max_seq_len": self.max_seq_len,
             "tokens_max_seq_len": self.tokens_max_seq_len,
             "mask_tokens": self.mask_tokens,
+            "labels_are_tokens": self.labels_are_tokens,
         }
     
     # collate method
@@ -159,7 +162,7 @@ class CustomDataset(torch.utils.data.Dataset):
 
         # aggregate list of sequences
         seqs, labels, paths, tokens, bar_positions = utils.transpose(l = [(sample["seq"], sample["label"], sample["path"], sample["token"], sample["bar_position"]) for sample in batch])
-        max_seq_len, tokens_max_seq_len, mask_tokens = batch[0]["max_seq_len"], batch[0]["tokens_max_seq_len"], batch[0]["mask_tokens"] # constant across all samples, so just grab the first one
+        max_seq_len, tokens_max_seq_len, mask_tokens, labels_are_tokens = batch[0]["max_seq_len"], batch[0]["tokens_max_seq_len"], batch[0]["mask_tokens"], batch[0]["labels_are_tokens"] # constant across all samples, so just grab the first one
         has_tokens, has_bar_positions = (tokens[0] is not None), (bar_positions[0] is not None)
 
         # deal with sequences
@@ -186,7 +189,7 @@ class CustomDataset(torch.utils.data.Dataset):
         bar_positions = torch.stack(tensors = bar_positions, dim = 0).to(utils.BAR_POSITION_TYPE) if has_bar_positions else None
         
         # labels
-        if has_tokens: # all labels are the same shape
+        if labels_are_tokens: # all labels are the same shape
             labels = pad(seqs = labels, length = tokens_max_seq_len)
         else: # labels are of different shape
             labels = torch.stack(tensors = labels, dim = 0)
@@ -223,8 +226,9 @@ def get_dataset(
 
     # get the correct label extractor
     max_seq_len = utils.MAX_SEQ_LEN_BY_TASK[task]
-    tokens_max_seq_len = utils.TOKEN_MAX_SEQ_LEN_BY_TASK[task]
-    mask_tokens = (task == utils.MELODY_TRANSFORMER_DIR_NAME)
+    token_max_seq_len = utils.TOKEN_MAX_SEQ_LEN_BY_TASK[task]
+    mask_tokens = (task == utils.MELODY_TRANSFORMER_DIR_NAME) or (task == utils.CHORD_DIR_NAME)
+    labels_are_tokens = (task == utils.MELODY_TRANSFORMER_DIR_NAME)
     
     # return dataset with relevant arguments
     return CustomDataset(
@@ -232,9 +236,10 @@ def get_dataset(
         paths = paths,
         mappings_path = mappings_path,
         max_seq_len = max_seq_len,
-        tokens_max_seq_len = tokens_max_seq_len,
+        tokens_max_seq_len = token_max_seq_len,
         pool = pool,
         mask_tokens = mask_tokens,
+        labels_are_tokens = labels_are_tokens,
     )
 
 ##################################################
@@ -422,13 +427,28 @@ if __name__ == "__main__":
                     # get paths, setup
                     seq = utils.load_pickle(filepath = f"{input_dir}/{stem}.{utils.PICKLE_FILETYPE}") # load in pickle file
                     seq = torch.from_numpy(seq).to(utils.DATA_TYPE) # convert from numpy array to torch tensor of desired type
+                    bar_positions, events = utils.load_pickle(filepath = f"{dirname(input_dir)}/{utils.JINGYUE_CHORD_MAPPING_DIR_NAME}/{stem}.{utils.PICKLE_FILETYPE}") # remi events
+                    
+                    # deal with uneven lengths
+                    if len(bar_positions) <= len(seq):
+                        seq = seq[:len(bar_positions), :]
+                        bar_positions.append(len(events) - 1) # add eos token to bar_positions, since it is implicitly a bar
+                    else: # len(bar_positions) > len(seq)
+                        bar_positions = bar_positions[:(len(seq) + 1)]
 
                     # save tensors
                     get_base_from_index = lambda i: f"{stem}_{i}.{utils.TENSOR_FILETYPE}"
                     for i in range(len(seq)):
-                        path_output = f"{output_dir}/{get_base_from_index(i = i)}"
+                        base_output = get_base_from_index(i = i)
+                        path_output = f"{output_dir}/{base_output}"
                         if not exists(path_output) or args.reset:
                             torch.save(obj = seq[i], f = path_output) # save sequence as torch pickle object
+                        tokens_path_output = f"{output_dir}/{utils.TOKEN_SUBDIR_NAME}/{base_output}"
+                        if not exists(tokens_path_output) or args.reset:
+                            events_in_bar = list(filter(lambda event: event["name"] != utils.CHORD_CLASS_WORD_TYPE, events[(bar_positions[i] + 1):(bar_positions[i + 1] - 1)]))
+                            torch.save(obj = torch.tensor(list(map(lambda event: utils.CHORD_REMI_VOCABULARY[f"{event['name']}_{event['value']}"], events_in_bar)), dtype = utils.TOKEN_TYPE), f = tokens_path_output) # save tokens as torch pickle object
+                            del events_in_bar # free up memory
+                    n_total_chords = len(seq) * utils.N_OUTPUTS_PER_INPUT_BAR_BY_TASK[utils.CHORD_DIR_NAME]
                     del seq # free up memory
 
                     # iterate through different chord mappings
@@ -436,7 +456,7 @@ if __name__ == "__main__":
                     for mapping_dir_name, indexer in zip(utils.JINGYUE_CHORD_MAPPING_DIR_NAMES, utils.CHORD_INDEXER):
                         chords = utils.load_pickle(filepath = f"{dirname(input_dir)}/{mapping_dir_name}/{stem}.{utils.PICKLE_FILETYPE}") # load in chords
                         chords = list(map(lambda chord: indexer[chord], chords)) # convert chords to indicies
-                        chords = [chords[i:(i + utils.N_OUTPUTS_PER_INPUT_BAR_BY_TASK[utils.CHORD_DIR_NAME])] for i in range(0, len(chords), utils.N_OUTPUTS_PER_INPUT_BAR_BY_TASK[utils.CHORD_DIR_NAME])] # reshape chords so there are four chords per bar
+                        chords = [chords[i:(i + utils.N_OUTPUTS_PER_INPUT_BAR_BY_TASK[utils.CHORD_DIR_NAME])] for i in range(0, n_total_chords, utils.N_OUTPUTS_PER_INPUT_BAR_BY_TASK[utils.CHORD_DIR_NAME])] # reshape chords so there are four chords per bar
                         mapping.append({get_base_from_index(i = i): chords[i] for i in range(len(chords))}) # add mappings to list of mappings                
 
                     # return list of dictionary(s) mapping bases to labels

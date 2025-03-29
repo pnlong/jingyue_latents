@@ -359,10 +359,23 @@ N_OUTPUTS_PER_INPUT_BAR_BY_TASK[CHORD_DIR_NAME] = 4 # 4, because 4 chords are pr
 N_CHORD11_CLASSES = len(CHORDS11)
 N_CHORD32_CLASSES = len(CHORDS32)
 
+# remi-related stuff
+CHORD_REMI_WORD_TYPES = ["Beat", "Note_Pitch", "Note_Duration"]
+CHORD_REMI_VALUES_BY_WORD_TYPE = dict(zip(CHORD_REMI_WORD_TYPES, (
+    [0, 2, 3, 4, 6, 8, 9, 10, 12, 14, 15, 16, 18, 20, 21, 22, 24, 26, 27, 28, 30, 32, 33, 34, 36, 38, 39, 40, 42, 44, 45, 46], # onset
+    [21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108], # pitch
+    [80, 120, 160, 240, 320, 360, 480, 640, 720, 960, 1440, 1920], # duration
+)))
+CHORD_REMI_VOCABULARY = {word: i for i, word in enumerate([f"{word_type}_{value}" for word_type in CHORD_REMI_WORD_TYPES for value in CHORD_REMI_VALUES_BY_WORD_TYPE[word_type]])}
+CHORD_CLASS_WORD_TYPE = "Note_Track"
+VOCABULARY_SIZE_BY_TASK[CHORD_DIR_NAME] = len(CHORD_REMI_VOCABULARY)
+
 # maximum song length (in bars) for chord data
 MAX_SEQ_LEN_BY_TASK[CHORD_DIR_NAME] = 1 # must be 1, since this is a bar-by-bar classification task
+TOKEN_MAX_SEQ_LEN_BY_TASK[CHORD_DIR_NAME] = 324 # maximum number of events in any given bar
 
 # mapping name(s) for chord
+JINGYUE_CHORD_MAPPING_DIR_NAME = "data_events"
 JINGYUE_CHORD_MAPPING_DIR_NAMES = ["chord_pkl_11", "chord_pkl_32"]
 MAPPING_NAMES_BY_TASK[CHORD_DIR_NAME] = [CHORD_DIR_NAME + "_" + mapping_dir_name.split("_")[-1] for mapping_dir_name in JINGYUE_CHORD_MAPPING_DIR_NAMES]
 JINGYUE_DIR_BY_TASK[CHORD_DIR_NAME] = f"{JINGYUE_DIR}/POP909_chord_recognition"

@@ -86,9 +86,14 @@ class CustomMLP(nn.Module):
         num_bar = 1 if self.prepool else input.shape[1]
         embedding_dim = input.shape[-1]
 
+        # infer booleans
+        is_mask_for_tokens = (tokens is not None) and (mask.shape == tokens.shape)
+
         # deal with tokens
         if tokens is not None:
             tokens = self.token_embeddings(tokens) # pass through embeddings
+            if is_mask_for_tokens:
+                tokens = tokens * mask.unsqueeze(dim = -1) # apply mask
             tokens = tokens.sum(dim = -2) # sum across different token types
             tokens = tokens.reshape(batch_size * num_bar, embedding_dim) # reshape to two dimensions
         else: # if not using tokens, just have a matrix of zeros (so no effect)
@@ -103,8 +108,11 @@ class CustomMLP(nn.Module):
             input = input.reshape(batch_size * num_bar, embedding_dim) # reshape input from (batch_size, num_bar, embedding_dim) to (batch_size * num_bar, embedding_dim)
             output = self.mlp(input + tokens) # feed input through model, which yields an output of size (batch_size * num_bar, n_classes)
             output = output.reshape(batch_size, num_bar, -1) # reshape output to size (batch_size, num_bar, n_classes)
-            output = output * mask.unsqueeze(dim = -1) # apply mask (size of (batch_size, num_bar)) to output
-            logits = output.sum(dim = 1) / mask.sum(dim = -1).unsqueeze(dim = -1) # average output to reduce num_bar dimension; output is now of size (batch_size, n_classes)
+            if not is_mask_for_tokens:
+                output = output * mask.unsqueeze(dim = -1) # apply mask (size of (batch_size, num_bar)) to output
+                logits = output.sum(dim = 1) / mask.sum(dim = -1).unsqueeze(dim = -1) # average output to reduce num_bar dimension; output is now of size (batch_size, n_classes)
+            else:
+                logits = output.sum(dim = 1)
             del output # free up memory
 
         # reshape logits any further if necessary
@@ -190,9 +198,14 @@ class CustomTransformer(nn.Module):
         # get some dimensions
         batch_size, num_bar, embedding_dim = input.shape
 
+        # infer booleans
+        is_mask_for_tokens = (tokens is not None) and (mask.shape == tokens.shape)
+
         # deal with tokens
         if tokens is not None:
             tokens = self.token_embeddings(tokens) # pass through embeddings
+            if is_mask_for_tokens:
+                tokens = tokens * mask.unsqueeze(dim = -1) # apply mask
             tokens = tokens.sum(dim = -2) # sum across different token types
         else: # if not using tokens, just have a matrix of zeros (so no effect)
             tokens = torch.zeros(size = (batch_size, num_bar, embedding_dim), dtype = utils.TOKEN_TYPE).to(input.device)
