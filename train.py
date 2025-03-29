@@ -79,7 +79,6 @@ def evaluate_model(
         loss = loss_fn(outputs, labels)
 
     # back propagate
-    # loss = loss_fn(outputs, labels)
     if update_parameters:
         loss.backward()
     loss = float(loss) # float(loss) because it has a gradient attribute

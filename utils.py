@@ -392,7 +392,8 @@ MELODY_INDEXER = MELODY_ID_TO_INDEX
 N_MELODY_CLASSES = len(MELODIES)
 
 # remi-related stuff
-MELODY_REMI_WORD_TYPES = ["Beat", "Note_Pitch", "Note_Duration"]
+MELODY_PITCH_WORD_TYPE = "Note_Pitch"
+MELODY_REMI_WORD_TYPES = ["Beat", MELODY_PITCH_WORD_TYPE, "Note_Duration"]
 MELODY_REMI_VALUES_BY_WORD_TYPE = dict(zip(MELODY_REMI_WORD_TYPES, (
     [0, 2, 3, 4, 6, 8, 9, 10, 12, 14, 15, 16, 18, 20, 21, 22, 24, 26, 27, 28, 30, 32, 33, 34, 36, 38, 39, 40, 42, 44, 45, 46], # onset
     [21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108], # pitch
@@ -430,15 +431,22 @@ N_MELODY_TRANSFORMER_CLASSES = len(MELODIES) + 1 # add 1 for the no-class option
 # remi-related stuff
 MELODY_TRANSFORMER_BOS_TOKEN = "BOS"
 MELODY_TRANSFORMER_EOS_TOKEN = "EOS"
+MELODY_TRANSFORMER_BAR_TOKEN = "Bar"
 NON_TRACK_EVENT_VALUE = 0
-MELODY_TRANSFORMER_EVENTS = [f"{MELODY_TRANSFORMER_BOS_TOKEN}_None", f"{MELODY_TRANSFORMER_EOS_TOKEN}_None", "Bar_None"] + [f"{MELODY_CLASS_WORD_TYPE}_{i + 1}" for i in range(len(MELODIES))] + [f"Time_Signature_{time_signature}" for time_signature in ("2/2", "2/4", "3/4", "3/8", "4/4", "6/8")] + list(MELODY_REMI_VOCABULARY.keys())
+MELODY_TRANSFORMER_EVENTS = [
+        f"{special_token}_None" for special_token in (MELODY_TRANSFORMER_BOS_TOKEN, MELODY_TRANSFORMER_EOS_TOKEN, MELODY_TRANSFORMER_BAR_TOKEN)
+    ] + [
+        f"{MELODY_CLASS_WORD_TYPE}_{i + 1}" for i in range(len(MELODIES))
+    ] + [
+        f"Time_Signature_{time_signature}" for time_signature in ("2/2", "2/4", "3/4", "3/8", "4/4", "6/8")
+    ] + list(MELODY_REMI_VOCABULARY.keys())
 MELODY_TRANSFORMER_REMI_VOCABULARY = {event: i for i, event in enumerate(MELODY_TRANSFORMER_EVENTS)}
 VOCABULARY_SIZE_BY_TASK[MELODY_TRANSFORMER_DIR_NAME] = len(MELODY_TRANSFORMER_REMI_VOCABULARY)
 
 # maximum song length (in bars) for melody data
 MELODY_TRANSFORMER_CLIP_LENGTH = 16 # number of bars in a clip
 MAX_SEQ_LEN_BY_TASK[MELODY_TRANSFORMER_DIR_NAME] = MELODY_TRANSFORMER_CLIP_LENGTH
-TOKEN_MAX_SEQ_LEN_BY_TASK[MELODY_TRANSFORMER_DIR_NAME] = 3858 # maximum number of events in a clip
+TOKEN_MAX_SEQ_LEN_BY_TASK[MELODY_TRANSFORMER_DIR_NAME] = 2902 # maximum number of events in a clip
 
 # mapping name(s) for melody
 MAPPING_NAMES_BY_TASK[MELODY_TRANSFORMER_DIR_NAME] = [MELODY_TRANSFORMER_DIR_NAME]

@@ -235,12 +235,6 @@ class CustomTransformer(nn.Module):
 # MELODY TRANSFORMER
 ##################################################
 
-def generate_causal_mask(seq_len):
-    mask = (torch.triu(torch.ones(seq_len, seq_len)) == 1).transpose(0, 1)
-    mask = mask.float().masked_fill(mask == 0, float("-inf")).masked_fill(mask == 1, float(0.0))
-    mask.requires_grad = False
-    return mask
-
 def weight_init_normal(weight, normal_std):
   nn.init.normal_(weight, 0.0, normal_std)
 

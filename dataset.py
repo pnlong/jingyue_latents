@@ -521,19 +521,25 @@ if __name__ == "__main__":
                         path_output = f"{output_dir}/{base_output}"
                         if not exists(path_output) or args.reset: # save path output if needed
                             torch.save(obj = seq[start:end], f = path_output) # save sequence as torch pickle object
-                        events_in_clip = events[bar_positions[start]:bar_positions[end]]# get events in clip
+                        events_in_clip = events[bar_positions[start]:bar_positions[end]] # get events in clip
                         events_in_clip = [{"name": utils.MELODY_TRANSFORMER_BOS_TOKEN, "value": None}] + events_in_clip + [{"name": utils.MELODY_TRANSFORMER_EOS_TOKEN, "value": None}] # add beginning and end of song tokens
-                        bar_positions_in_clip = list(map(lambda bar_position: bar_position - bar_positions[start] + 1, bar_positions[start:end])) # get the bar positions
-                        bar_positions_in_clip[0] = 0 # set first bar position to 0
                         tokens_path_output = f"{output_dir}/{utils.TOKEN_SUBDIR_NAME}/{base_output}"
+                        events_in_clip_no_track = list(filter(lambda event: event["name"] != utils.MELODY_CLASS_WORD_TYPE, events_in_clip))
                         if not exists(tokens_path_output) or args.reset: # save the tokens if needed
-                            torch.save(obj = torch.tensor(list(map(lambda event: utils.MELODY_TRANSFORMER_REMI_VOCABULARY[event["name"] + "_" + str(event["value"])], events_in_clip)), dtype = utils.TOKEN_TYPE), f = tokens_path_output) # save tokens as torch pickle object
+                            torch.save(obj = torch.tensor(list(map(lambda event: utils.MELODY_TRANSFORMER_REMI_VOCABULARY[f"{event['name']}_{event['value']}"], events_in_clip_no_track)), dtype = utils.TOKEN_TYPE), f = tokens_path_output) # save tokens as torch pickle object
+                        bar_positions_in_clip = [i for i, event in enumerate(events_in_clip) if event["name"] == utils.MELODY_TRANSFORMER_BAR_TOKEN] # get the bar positions
+                        bar_positions_in_clip[0] = 0 # set first bar position to 0, which represents the index of the BOS token
                         bar_positions_path_output = f"{output_dir}/{utils.BAR_POSITION_SUBDIR_NAME}/{base_output}"
                         if not exists(bar_positions_path_output) or args.reset: # save bar positions if needed
                             torch.save(obj = torch.tensor(bar_positions_in_clip + [len(events_in_clip)], dtype = utils.TOKEN_TYPE), f = bar_positions_path_output) # save bar positions as torch pickle object
-                        mapping[base_output] = [event["value"] if event["name"] == utils.MELODY_CLASS_WORD_TYPE else 0 for event in events_in_clip] # make note of mapping
+                        labels = utils.rep(x = 0, times = len(events_in_clip_no_track)) # initialize labels to all zeros
+                        track_per_pitch = iter(map(lambda event: event["value"], filter(lambda event: event["name"] == utils.MELODY_CLASS_WORD_TYPE, events_in_clip))) # get track class index for each track
+                        for j in range(len(labels)):
+                            if events_in_clip_no_track[j]["name"] == utils.MELODY_PITCH_WORD_TYPE: # replace pitch events with track indicies
+                                labels[j] = next(track_per_pitch)
+                        mapping[base_output] = labels
                         idx += 1 # increment idx
-                        del base_output, start, end, path_output, events_in_clip, bar_positions_in_clip, tokens_path_output, bar_positions_path_output # free up memory
+                        del base_output, start, end, path_output, events_in_clip, events_in_clip_no_track, track_per_pitch, bar_positions_in_clip, labels, tokens_path_output, bar_positions_path_output # free up memory
                     del seq, bar_positions, events, idx # free up memory
 
                     # return list of dictionary(s) mapping bases to labels
@@ -597,6 +603,7 @@ if __name__ == "__main__":
             output_path = output_path_by_partition[partition]
             start, end = partition_ranges_in_all_stems[partition] # get start and end indicies of partition
             data = sum(bases_by_stem[start:end], []) # extract correct range for the partition
+            random.shuffle(data) # shuffle data within a partition
             utils.save_txt(filepath = output_path, data = data)
             logging.info(f"Wrote {partition} partition to {output_path}.")
 
